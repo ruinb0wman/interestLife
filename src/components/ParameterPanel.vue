@@ -28,6 +28,69 @@ const toggles = [
 <template>
   <div class="panel">
     <div class="card param-card">
+      <div class="card-title">时间设定</div>
+      <p class="card-hint">工资发到「工资结束年龄」为止；首次换车 = 初始年龄 + 买车周期，此后每周期一次</p>
+      <div class="param-grid">
+        <div class="param-item">
+          <label>初始年龄</label>
+          <div class="input-row">
+            <el-input-number
+              v-model="model.startAge"
+              :min="16"
+              :max="model.targetAge - 1"
+              :precision="0"
+              :step="1"
+              :controls-position="'right'"
+            />
+            <span class="unit">岁</span>
+          </div>
+        </div>
+        <div class="param-item">
+          <label>目标年龄</label>
+          <div class="input-row">
+            <el-input-number
+              v-model="model.targetAge"
+              :min="model.startAge + 1"
+              :max="120"
+              :precision="0"
+              :step="1"
+              :controls-position="'right'"
+            />
+            <span class="unit">岁</span>
+          </div>
+        </div>
+        <div class="param-item">
+          <label>工资结束年龄</label>
+          <div class="input-row">
+            <el-input-number
+              v-model="model.salaryStopAge"
+              :min="model.startAge"
+              :max="model.targetAge"
+              :precision="0"
+              :step="1"
+              :controls-position="'right'"
+            />
+            <span class="unit">岁</span>
+          </div>
+        </div>
+        <div class="param-item">
+          <label>买车周期</label>
+          <div class="input-row">
+            <el-input-number
+              v-model="model.carReplaceInterval"
+              :min="1"
+              :max="40"
+              :precision="0"
+              :step="1"
+              :controls-position="'right'"
+            />
+            <span class="unit">年</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card param-card">
       <div class="card-title">收支参数</div>
       <p class="card-hint">涨幅 / 利率以小数输入，如 3% 填 0.03</p>
       <div class="param-grid">

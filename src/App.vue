@@ -10,7 +10,7 @@ import DetailTable from './components/DetailTable.vue'
 let params = reactive({ ...DEFAULT_PARAMS })
 
 const rows = computed(() => simulate(params))
-const analysis = computed(() => analyze(rows.value))
+const analysis = computed(() => analyze(rows.value, params))
 </script>
 
 <template>
@@ -18,7 +18,7 @@ const analysis = computed(() => analyze(rows.value))
     <header class="header">
       <h1>躺平财务模拟器 <span class="sub">· 不交社保版</span></h1>
       <p class="desc">
-        模拟一位 32 岁、不交社保、不买房、不生子的人，靠 50 万本金投资 + 零散工资度过 60 年。
+        模拟一位 30 岁起、不交社保、不买房、不生子的人，靠投资 + 零散工资度过 60 年。
         调整下方参数，找出<b>躺平不破产</b>的条件。
       </p>
     </header>
@@ -32,8 +32,10 @@ const analysis = computed(() => analyze(rows.value))
       title="可以躺平：全程从未破产"
     >
       <template #default>
-        92 岁时仍有 <b>{{ formatWan(analysis.age92) }}</b>（{{ formatYuan(analysis.age92) }}）
-        资产，60 年内最低点为 {{ analysis.minBalanceAge }} 岁的 {{ formatYuan(analysis.minBalance) }}。
+        {{ analysis.targetAge }} 岁时仍有 <b>{{ formatWan(analysis.finalBalance) }}</b>（{{
+          formatYuan(analysis.finalBalance)
+        }}）
+        资产，全程最低点为 {{ analysis.minBalanceAge }} 岁的 {{ formatYuan(analysis.minBalance) }}。
       </template>
     </el-alert>
     <el-alert
@@ -42,7 +44,7 @@ const analysis = computed(() => analyze(rows.value))
       :closable="false"
       show-icon
       class="banner"
-      title="会破产，无法躺平到 92 岁"
+      title="会破产，无法躺平到目标年龄"
     >
       <template #default>
         本金在
@@ -50,7 +52,7 @@ const analysis = computed(() => analyze(rows.value))
           <b>{{ analysis.firstNegativeAge }} 岁</b>首现负数
         </template>
         <template v-else>某一年</template>
-        ，60 年内最低点为 {{ analysis.minBalanceAge }} 岁的 {{ formatYuan(analysis.minBalance) }}。
+        ，全程最低点为 {{ analysis.minBalanceAge }} 岁的 {{ formatYuan(analysis.minBalance) }}。
         试试提高本金 / 收益率，或压低生活费涨幅、停用换车支出。
       </template>
     </el-alert>
@@ -61,7 +63,7 @@ const analysis = computed(() => analyze(rows.value))
 
     <StatCards :analysis="analysis" />
 
-    <DetailTable :rows="rows" />
+    <DetailTable :rows="rows" :params="params" />
   </div>
 </template>
 

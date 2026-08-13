@@ -4,11 +4,29 @@ import { formatWan, formatYuan } from '../format'
 
 const props = defineProps<{ analysis: Analysis }>()
 
+const span = () => props.analysis.targetAge - props.analysis.startAge
+
 const cards = [
-  { label: '92 岁总资产', value: () => props.analysis.age92, hint: '模拟结束时的全部身家' },
-  { label: '42 岁（第一次换车后）', value: () => props.analysis.age42, hint: '首次换车节点' },
-  { label: '52 岁（停薪 + 换车后）', value: () => props.analysis.age52, hint: '工资停发节点' },
-  { label: '最低本金', value: () => props.analysis.minBalance, hint: `${props.analysis.minBalanceAge} 岁时为 60 年最低点` },
+  {
+    label: `${props.analysis.targetAge} 岁总资产`,
+    value: () => props.analysis.finalBalance,
+    hint: '模拟结束时的全部身家',
+  },
+  {
+    label: `${props.analysis.firstCarAge} 岁（第一次换车后）`,
+    value: () => props.analysis.afterFirstCar,
+    hint: '首次换车节点',
+  },
+  {
+    label: `${props.analysis.salaryStopAge + 1} 岁（停薪后）`,
+    value: () => props.analysis.afterSalaryStop,
+    hint: '工资停发后的节点',
+  },
+  {
+    label: '最低本金',
+    value: () => props.analysis.minBalance,
+    hint: `${props.analysis.minBalanceAge} 岁时为 ${span()} 年内最低点`,
+  },
 ]
 </script>
 

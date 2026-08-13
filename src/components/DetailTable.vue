@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { YearRow } from '../lib'
+import { carYears, type SimParams, type YearRow } from '../lib'
 import { formatYuan } from '../format'
 
-const props = defineProps<{ rows: YearRow[] }>()
+const props = defineProps<{ rows: YearRow[]; params: SimParams }>()
+
+const startAge = computed(() => props.rows[0]?.age ?? props.params.startAge)
 
 const tableRows = computed(() =>
-  props.rows.filter((r) => (r.age - 32) % 5 === 0),
+  props.rows.filter((r) => (r.age - startAge.value) % 5 === 0),
+)
+
+const carYearsText = computed(() =>
+  carYears(props.params.startAge, props.params.targetAge, props.params.carReplaceInterval).join(
+    ' / ',
+  ),
 )
 </script>
 
@@ -37,7 +45,9 @@ const tableRows = computed(() =>
           </el-table-column>
         </el-table>
         <p class="note">
-          换车年份：42 / 52 / 62 / 72 / 82 / 92 岁 · 工资停发：52 岁起 · 换车净支出 = 新车价 − 旧车残值（25%）
+          换车年份：{{ carYearsText }} 岁 · 工资发至 {{ params.salaryStopAge }} 岁，{{
+            params.salaryStopAge + 1
+          }} 岁起停发 · 换车净支出 = 新车价 − 旧车残值（25%）
         </p>
       </el-collapse-item>
     </el-collapse>

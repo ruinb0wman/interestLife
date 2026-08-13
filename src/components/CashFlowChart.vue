@@ -44,7 +44,7 @@ function buildOption(rows: YearRow[]): echarts.EChartsOption {
       name: '年龄（岁）',
       nameLocation: 'middle',
       nameGap: 28,
-      axisLabel: { interval: 4 },
+      axisLabel: { interval: Math.max(1, Math.round(ages.length / 15)) },
     },
     yAxis: [
       {
