@@ -1,0 +1,52 @@
+:root {
+  --bg: #f3f6fb;
+  --panel: #ffffff;
+  --border: #e4e9f2;
+  --text: #1e293b;
+  --text-2: #64748b;
+  --text-3: #94a3b8;
+  --primary: #2563eb;
+  --green: #059669;
+  --red: #dc2626;
+
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    Roboto,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* Element Plus 微调：统一圆角与主色 */
+.el-input-number,
+.el-switch {
+  --el-color-primary: var(--primary);
+}
