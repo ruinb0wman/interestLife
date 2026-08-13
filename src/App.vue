@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import { computed, reactive } from 'vue'
-import { analyze, DEFAULT_PARAMS, simulate } from './lib'
-import { formatWan, formatYuan } from './format'
+import { analyze, DEFAULT_PARAMS, simulate, simulateScenario } from './lib'
+import { formatPercent, formatWan, formatYuan } from './format'
 import ParameterPanel from './components/ParameterPanel.vue'
 import CashFlowChart from './components/CashFlowChart.vue'
 import StatCards from './components/StatCards.vue'
 import DetailTable from './components/DetailTable.vue'
+import StressTest from './components/StressTest.vue'
 
-let params = reactive({ ...DEFAULT_PARAMS })
+let params = reactive({
+  ...DEFAULT_PARAMS,
+  oneOffExpenses: DEFAULT_PARAMS.oneOffExpenses.map((o) => ({ ...o })),
+})
 
 const rows = computed(() => simulate(params))
+const optimisticRows = computed(() => simulateScenario(params, params.optimisticReturn))
+const pessimisticRows = computed(() => simulateScenario(params, params.pessimisticReturn))
 const analysis = computed(() => analyze(rows.value, params))
+const pessimisticAnalysis = computed(() => analyze(pessimisticRows.value, params))
 </script>
 
 <template>
@@ -18,24 +25,43 @@ const analysis = computed(() => analyze(rows.value, params))
     <header class="header">
       <h1>躺平财务模拟器 <span class="sub">· 不交社保版</span></h1>
       <p class="desc">
-        模拟一位 30 岁起、不交社保、不买房、不生子的人，靠投资 + 零散工资度过 60 年。
+        模拟一位 30 岁起、不交社保、不买房、不生子的人，靠投资 + 零散工作度过 60 年。
         调整下方参数，找出<b>躺平不破产</b>的条件。
       </p>
     </header>
 
     <el-alert
-      v-if="analysis.survives"
+      v-if="pessimisticAnalysis.survives"
       type="success"
       :closable="false"
       show-icon
       class="banner"
-      title="可以躺平：全程从未破产"
+      title="可以躺平：悲观情景也未破产"
     >
       <template #default>
-        {{ analysis.targetAge }} 岁时仍有 <b>{{ formatWan(analysis.finalBalance) }}</b>（{{
-          formatYuan(analysis.finalBalance)
-        }}）
-        资产，全程最低点为 {{ analysis.minBalanceAge }} 岁的 {{ formatYuan(analysis.minBalance) }}。
+        即使在悲观收益率（{{ formatPercent(params.pessimisticReturn) }}）下，
+        {{ analysis.targetAge }} 岁时仍有 {{ formatWan(pessimisticAnalysis.finalBalance) }}；
+        中性情景（{{ formatPercent(params.annualReturn) }}）下为
+        {{ formatWan(analysis.finalBalance) }}。
+      </template>
+    </el-alert>
+    <el-alert
+      v-else-if="analysis.survives"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="banner"
+      title="中性可躺平，但悲观情景存在失效风险"
+    >
+      <template #default>
+        悲观收益率（{{ formatPercent(params.pessimisticReturn) }}）下本金在
+        <template v-if="pessimisticAnalysis.firstNegativeAge >= 0">
+          <b>{{ pessimisticAnalysis.firstNegativeAge }} 岁</b>首现负数
+        </template>
+        <template v-else>某一年</template>
+        （最低 {{ formatYuan(pessimisticAnalysis.minBalance) }}）。
+        中性情景（{{ formatPercent(params.annualReturn) }}）最终仍有
+        {{ formatWan(analysis.finalBalance) }}。建议压低生活费/医疗涨幅、提高本金或收益率。
       </template>
     </el-alert>
     <el-alert
@@ -53,15 +79,25 @@ const analysis = computed(() => analyze(rows.value, params))
         </template>
         <template v-else>某一年</template>
         ，全程最低点为 {{ analysis.minBalanceAge }} 岁的 {{ formatYuan(analysis.minBalance) }}。
-        试试提高本金 / 收益率，或压低生活费涨幅、停用换车支出。
+        试试提高本金 / 收益率，或压低生活费涨幅、停用换车/医疗支出。
       </template>
     </el-alert>
 
     <ParameterPanel v-model="params" />
 
-    <CashFlowChart :rows="rows" />
+    <StressTest :params="params" />
 
-    <StatCards :analysis="analysis" />
+    <CashFlowChart
+      :rows="rows"
+      :optimistic-rows="optimisticRows"
+      :pessimistic-rows="pessimisticRows"
+    />
+
+    <StatCards
+      :analysis="analysis"
+      :pessimistic-balance="pessimisticAnalysis.finalBalance"
+      :pessimistic-return="params.pessimisticReturn"
+    />
 
     <DetailTable :rows="rows" :params="params" />
   </div>
@@ -79,22 +115,22 @@ const analysis = computed(() => analyze(rows.value, params))
 .header h1 {
   font-size: 26px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--text);
   margin: 0;
 }
 .header .sub {
   font-size: 18px;
   font-weight: 500;
-  color: #64748b;
+  color: var(--text-2);
 }
 .desc {
   font-size: 14px;
-  color: #64748b;
+  color: var(--text-2);
   margin: 6px 0 0;
   line-height: 1.6;
 }
 .desc b {
-  color: #1e40af;
+  color: var(--primary);
 }
 .banner {
   border-radius: 12px;

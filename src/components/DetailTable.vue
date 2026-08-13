@@ -56,23 +56,23 @@ const carYearsText = computed(() =>
 
 <style scoped>
 .card {
-  background: #fff;
-  border: 1px solid #e4e9f2;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(30, 64, 175, 0.06);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
   padding: 8px 16px 4px;
 }
 .car-year {
-  color: #b45309;
+  color: var(--warning);
   font-weight: 600;
 }
 .neg {
-  color: #dc2626;
+  color: var(--red);
   font-weight: 600;
 }
 .note {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--text-3);
   margin: 8px 0 12px;
 }
 </style>

@@ -5,12 +5,15 @@
 //
 // 每年递推顺序（严格）：
 //   1. 年初本金产生投资收益：income = 年初本金 × 年化收益率
-//   2. 加入当年工资（超过「工资结束年龄」后为 0）
-//   3. 扣除当年生活费
-//   4. 若当年为换车年，最后扣除换车净支出（新车价 − 旧车残值）
-//  → 年末本金 = 年初本金 + 投资收益 + 年工资 − 年生活费 − 换车净支出
+//   2. 加入当年工资（超过「工资结束年龄」后为 0）与零工收入
+//   3. 扣除当年生活费，超过「医疗起始年龄」后加扣老年医疗/护理支出
+//   4. 若当年为换车年，扣除换车净支出（新车价 − 旧车残值）
+//   5. 最后扣除当年一次性大额支出（大病/意外）
+//  → 年末本金 = 年初本金 + 投资收益 + 年工资 + 零工收入 − 年生活费
+//              − 年医疗支出 − 换车净支出 − 一次性支出
 //
 // 复利、残值抵扣、换车年顺序均体现在下方 simulate() 中。
+// monteCarlo() 为压力测试：收益率与生活费涨幅逐年随机游走。
 
 export const DEFAULT_START_AGE = 30
 export const DEFAULT_TARGET_AGE = 90
@@ -18,6 +21,14 @@ export const DEFAULT_SALARY_STOP_AGE = 50
 export const DEFAULT_CAR_REPLACE_INTERVAL = 10
 // 旧车残值 = 当前车价 × 25%
 export const CAR_RESIDUAL_RATIO = 0.25
+
+/** 一次性大额支出（大病 / 意外） */
+export interface OneOffExpense {
+  /** 触发年龄（岁） */
+  age: number
+  /** 支出金额（元） */
+  amount: number
+}
 
 /** 所有可调参数（涨幅/利率均以小数输入，如 3% 填 0.03） */
 export interface SimParams {
@@ -29,6 +40,7 @@ export interface SimParams {
   salaryStopAge: number
   /** 买车周期（年，首次换车 = 初始年龄 + 周期，此后每周期一次） */
   carReplaceInterval: number
+
   /** 初始月薪（元），年工资 = 月薪 × 12 */
   monthlySalary: number
   /** 年薪涨幅（小数，默认 0.03） */
@@ -39,12 +51,34 @@ export interface SimParams {
   livingGrowth: number
   /** 初始投资本金（元，默认 500000） */
   initialPrincipal: number
-  /** 投资年化收益率（小数，默认 0.08） */
+  /** 投资年化收益率（小数，默认 0.08，即“中性情景”） */
   annualReturn: number
+  /** 乐观情景收益率（小数，默认 0.10） */
+  optimisticReturn: number
+  /** 悲观情景收益率（小数，默认 0.04） */
+  pessimisticReturn: number
   /** 初始新车价格（元，默认 100000），购买价 = 车价 × (1+车价涨幅)^(年龄−初始年龄) */
   initialCarPrice: number
   /** 车价年涨幅（小数，默认 0.01） */
   carPriceGrowth: number
+
+  /** 老年医疗/护理起始年龄（岁，默认 70；该年龄起额外支出） */
+  medicalStartAge: number
+  /** 老年医疗月支出（元/月，默认 0） */
+  monthlyMedical: number
+  /** 医疗支出年涨幅（小数，默认 0.03） */
+  medicalGrowth: number
+
+  /** 零工/其他收入月金额（元/月，默认 0；工资停发后发至结束年龄） */
+  monthlyExtraIncome: number
+  /** 零工收入年涨幅（小数，默认 0.03） */
+  extraIncomeGrowth: number
+  /** 零工收入结束年龄（岁，默认目标年龄） */
+  extraIncomeStopAge: number
+
+  /** 一次性大额支出列表（默认空） */
+  oneOffExpenses: OneOffExpense[]
+
   /** 是否启用工资收入 */
   enableSalary: boolean
   /** 是否启用投资收益 */
@@ -53,6 +87,12 @@ export interface SimParams {
   enableLiving: boolean
   /** 是否启用换车支出 */
   enableCar: boolean
+  /** 是否启用老年医疗支出 */
+  enableMedical: boolean
+  /** 是否启用零工/其他收入 */
+  enableExtraIncome: boolean
+  /** 是否启用一次性大额支出 */
+  enableOneOff: boolean
 }
 
 export const DEFAULT_PARAMS: SimParams = {
@@ -66,12 +106,24 @@ export const DEFAULT_PARAMS: SimParams = {
   livingGrowth: 0.03,
   initialPrincipal: 500000,
   annualReturn: 0.08,
+  optimisticReturn: 0.1,
+  pessimisticReturn: 0.04,
   initialCarPrice: 100000,
   carPriceGrowth: 0.01,
+  medicalStartAge: 70,
+  monthlyMedical: 0,
+  medicalGrowth: 0.03,
+  monthlyExtraIncome: 0,
+  extraIncomeGrowth: 0.03,
+  extraIncomeStopAge: 90,
+  oneOffExpenses: [],
   enableSalary: true,
   enableInvestment: true,
   enableLiving: true,
   enableCar: true,
+  enableMedical: true,
+  enableExtraIncome: true,
+  enableOneOff: true,
 }
 
 /** 某一年度的现金流明细 */
@@ -83,10 +135,16 @@ export interface YearRow {
   investmentIncome: number
   /** 年工资（工资结束年龄之前），之后为 0 */
   salary: number
+  /** 零工/其他年收入（工资停发后至结束年龄） */
+  extraIncome: number
   /** 年生活费 */
   living: number
+  /** 老年医疗/护理年支出（医疗起始年龄之后） */
+  medical: number
   /** 换车净支出 = 新车价 − 旧车残值，非换车年为 0 */
   carNet: number
+  /** 一次性大额支出合计，非触发年为 0 */
+  oneOff: number
   /** 年末本金 */
   endPrincipal: number
 }
@@ -117,6 +175,20 @@ export interface Analysis {
   afterSalaryStop: number
 }
 
+/** 蒙特卡洛压力测试结果 */
+export interface McResult {
+  /** 全程本金从未为负的模拟占比（0~1） */
+  successRate: number
+  /** 最终资产的 5% 分位 */
+  p5Final: number
+  /** 最终资产中位数（50% 分位） */
+  p50Final: number
+  /** 最终资产的 95% 分位 */
+  p95Final: number
+  /** 所有模拟中最差的最终资产 */
+  worstFinal: number
+}
+
 /** 换车年份列表：初始年龄 + 周期，每周期一次，直到目标年龄 */
 export function carYears(startAge: number, targetAge: number, interval: number): number[] {
   const years: number[] = []
@@ -126,8 +198,74 @@ export function carYears(startAge: number, targetAge: number, interval: number):
   return years
 }
 
-/** 按年递推「初始年龄」到「目标年龄」，每年一行 */
+/** 计算单个年度（供 simulate / simulateScenario / monteCarlo 复用） */
+function computeYear(
+  params: SimParams,
+  age: number,
+  principal: number,
+  annualReturn: number,
+  livingFactor: number,
+  cars: number[],
+): YearRow {
+  const yearsSince = age - params.startAge
+
+  const investmentIncome = params.enableInvestment ? principal * annualReturn : 0
+
+  const salary =
+    params.enableSalary && age <= params.salaryStopAge
+      ? params.monthlySalary * 12 * Math.pow(1 + params.salaryGrowth, yearsSince)
+      : 0
+
+  const extraIncome =
+    params.enableExtraIncome && age > params.salaryStopAge && age <= params.extraIncomeStopAge
+      ? params.monthlyExtraIncome *
+        12 *
+        Math.pow(1 + params.extraIncomeGrowth, age - params.salaryStopAge - 1)
+      : 0
+
+  const living = params.enableLiving ? params.monthlyLiving * 12 * livingFactor : 0
+
+  const medical =
+    params.enableMedical && age >= params.medicalStartAge
+      ? params.monthlyMedical *
+        12 *
+        Math.pow(1 + params.medicalGrowth, age - params.medicalStartAge)
+      : 0
+
+  let carNet = 0
+  if (params.enableCar && cars.includes(age)) {
+    const newCarPrice = params.initialCarPrice * Math.pow(1 + params.carPriceGrowth, yearsSince)
+    carNet = newCarPrice * (1 - CAR_RESIDUAL_RATIO)
+  }
+
+  const oneOff = params.enableOneOff
+    ? params.oneOffExpenses.reduce((sum, e) => (e.age === age ? sum + e.amount : sum), 0)
+    : 0
+
+  const endPrincipal =
+    principal + investmentIncome + salary + extraIncome - living - medical - carNet - oneOff
+
+  return {
+    age,
+    startPrincipal: principal,
+    investmentIncome,
+    salary,
+    extraIncome,
+    living,
+    medical,
+    carNet,
+    oneOff,
+    endPrincipal,
+  }
+}
+
+/** 按年递推「初始年龄」到「目标年龄」，使用中性收益率（默认参数下运行） */
 export function simulate(params: SimParams): YearRow[] {
+  return simulateScenario(params, params.annualReturn)
+}
+
+/** 按年递推，使用指定的年化收益率（三情景对照用） */
+export function simulateScenario(params: SimParams, annualReturn: number): YearRow[] {
   if (params.startAge >= params.targetAge) return []
 
   const rows: YearRow[] = []
@@ -135,44 +273,10 @@ export function simulate(params: SimParams): YearRow[] {
   let principal = params.initialPrincipal
 
   for (let age = params.startAge; age <= params.targetAge; age++) {
-    const yearsSince = age - params.startAge
-
-    // 1. 投资收益（基于年初本金）
-    const investmentIncome = params.enableInvestment ? principal * params.annualReturn : 0
-
-    // 2. 工资（超过工资结束年龄后为 0）
-    const salary =
-      params.enableSalary && age <= params.salaryStopAge
-        ? params.monthlySalary * 12 * Math.pow(1 + params.salaryGrowth, yearsSince)
-        : 0
-
-    // 3. 生活费（每年按涨幅上涨）
-    const living = params.enableLiving
-      ? params.monthlyLiving * 12 * Math.pow(1 + params.livingGrowth, yearsSince)
-      : 0
-
-    // 4. 换车（最后一步）：新车价 = 车价 × (1+涨幅)^(年龄−初始年龄)，残值 = 当前车价 × 25%
-    let carNet = 0
-    if (params.enableCar && cars.includes(age)) {
-      const newCarPrice = params.initialCarPrice * Math.pow(1 + params.carPriceGrowth, yearsSince)
-      const residual = newCarPrice * CAR_RESIDUAL_RATIO
-      carNet = newCarPrice - residual
-    }
-
-    // 年末本金
-    const endPrincipal = principal + investmentIncome + salary - living - carNet
-
-    rows.push({
-      age,
-      startPrincipal: principal,
-      investmentIncome,
-      salary,
-      living,
-      carNet,
-      endPrincipal,
-    })
-
-    principal = endPrincipal
+    const livingFactor = Math.pow(1 + params.livingGrowth, age - params.startAge)
+    const row = computeYear(params, age, principal, annualReturn, livingFactor, cars)
+    rows.push(row)
+    principal = row.endPrincipal
   }
 
   return rows
@@ -218,5 +322,71 @@ export function analyze(rows: YearRow[], params: SimParams): Analysis {
     finalBalance,
     afterFirstCar,
     afterSalaryStop,
+  }
+}
+
+function gaussian(): number {
+  // Box-Muller
+  let u = 0
+  let v = 0
+  while (u === 0) u = Math.random()
+  while (v === 0) v = Math.random()
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)
+}
+
+function clamp(x: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, x))
+}
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * sorted.length)))
+  return sorted[idx]
+}
+
+/**
+ * 蒙特卡洛压力测试：每年收益率 ~ N(annualReturn, returnVolatility)、
+ * 生活费涨幅 ~ N(livingGrowth, inflationVolatility) 随机游走，
+ * 共 iterations 次模拟，统计全程本金从未为负的成功率与最终资产分位。
+ */
+export function monteCarlo(
+  params: SimParams,
+  iterations: number,
+  returnVolatility: number,
+  inflationVolatility: number,
+): McResult {
+  if (params.startAge >= params.targetAge || iterations <= 0) {
+    return { successRate: 0, p5Final: 0, p50Final: 0, p95Final: 0, worstFinal: 0 }
+  }
+
+  const cars = carYears(params.startAge, params.targetAge, params.carReplaceInterval)
+  const finals: number[] = []
+  let successes = 0
+
+  for (let iter = 0; iter < iterations; iter++) {
+    let principal = params.initialPrincipal
+    let livingFactor = 1
+    let ok = true
+
+    for (let age = params.startAge; age <= params.targetAge; age++) {
+      const ret = clamp(params.annualReturn + returnVolatility * gaussian(), -0.3, 0.6)
+      const infl = clamp(params.livingGrowth + inflationVolatility * gaussian(), -0.05, 0.2)
+      livingFactor *= 1 + infl
+      const row = computeYear(params, age, principal, ret, livingFactor, cars)
+      if (row.endPrincipal < 0) ok = false
+      principal = row.endPrincipal
+    }
+
+    finals.push(principal)
+    if (ok) successes++
+  }
+
+  finals.sort((a, b) => a - b)
+  return {
+    successRate: successes / iterations,
+    p5Final: percentile(finals, 0.05),
+    p50Final: percentile(finals, 0.5),
+    p95Final: percentile(finals, 0.95),
+    worstFinal: finals[0] ?? 0,
   }
 }

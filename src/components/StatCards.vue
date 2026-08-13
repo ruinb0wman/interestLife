@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import type { Analysis } from '../lib'
-import { formatWan, formatYuan } from '../format'
+import { formatPercent, formatWan, formatYuan } from '../format'
 
-const props = defineProps<{ analysis: Analysis }>()
+const props = defineProps<{
+  analysis: Analysis
+  pessimisticBalance: number
+  pessimisticReturn: number
+}>()
 
 const span = () => props.analysis.targetAge - props.analysis.startAge
 
 const cards = [
   {
-    label: `${props.analysis.targetAge} 岁总资产`,
+    label: `${props.analysis.targetAge} 岁总资产（中性）`,
     value: () => props.analysis.finalBalance,
     hint: '模拟结束时的全部身家',
+  },
+  {
+    label: `悲观情景总资产（${formatPercent(props.pessimisticReturn)}）`,
+    value: () => props.pessimisticBalance,
+    hint: '最坏情景下的剩余身家',
   },
   {
     label: `${props.analysis.firstCarAge} 岁（第一次换车后）`,
@@ -51,25 +60,25 @@ const cards = [
 <style scoped>
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 16px;
 }
 .stat-card {
-  background: #fff;
-  border: 1px solid #e4e9f2;
-  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   padding: 16px 18px;
-  box-shadow: 0 1px 3px rgba(30, 64, 175, 0.06);
+  box-shadow: var(--shadow-md);
 }
 .stat-card.positive {
-  border-left: 4px solid #10b981;
+  border-left: 4px solid var(--green);
 }
 .stat-card.negative {
-  border-left: 4px solid #ef4444;
+  border-left: 4px solid var(--red);
 }
 .stat-label {
   font-size: 13px;
-  color: #64748b;
+  color: var(--text-2);
 }
 .stat-value {
   font-size: 22px;
@@ -78,27 +87,18 @@ const cards = [
   font-variant-numeric: tabular-nums;
 }
 .positive .stat-value {
-  color: #059669;
+  color: var(--green);
 }
 .negative .stat-value {
-  color: #dc2626;
+  color: var(--red);
 }
 .stat-sub {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
 .stat-hint {
-  color: #cbd5e1;
-}
-@media (max-width: 1000px) {
-  .stats {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-@media (max-width: 520px) {
-  .stats {
-    grid-template-columns: 1fr;
-  }
+  color: var(--text-3);
+  opacity: 0.75;
 }
 </style>

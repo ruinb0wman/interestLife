@@ -1,13 +1,21 @@
 :root {
-  --bg: #f3f6fb;
+  --bg: #f5f7fa;
   --panel: #ffffff;
-  --border: #e4e9f2;
-  --text: #1e293b;
-  --text-2: #64748b;
-  --text-3: #94a3b8;
-  --primary: #2563eb;
-  --green: #059669;
-  --red: #dc2626;
+  --border: #e5e7eb;
+  --text: #1f2937;
+  --text-2: #6b7280;
+  --text-3: #9ca3af;
+  --primary: #1677ff;
+  --green: #52c41a;
+  --red: #ff4d4f;
+  --warning: #faad14;
+  --ok-bg: #f6ffed;
+  --ok-border: #b7eb8f;
+  --toggle-bg: #f3f4f6;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 
   font-family:
     system-ui,
@@ -25,6 +33,107 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* ── 深色模式（固定使用）· 配色参考 GoFundBot ── */
+html.dark {
+  --bg: #1b1b1f;
+  --panel: #202127;
+  --border: #3c3f44;
+  --text: #dfdfd6;
+  --text-2: #98989f;
+  --text-3: #6a6a71;
+  --primary: #a8b1ff;
+  --green: #3dd68c;
+  --red: #f66f81;
+  --warning: #f9b44e;
+  --ok-bg: rgba(61, 214, 140, 0.14);
+  --ok-border: #3dd68c;
+  --toggle-bg: #2a2b31;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+
+  /* ── element-plus 主题令牌覆盖（映射 GoFundBot 配色）── */
+  /* 主色及梯度 */
+  --el-color-primary: #a8b1ff;
+  --el-color-primary-light-3: color-mix(in srgb, #a8b1ff 70%, #fff);
+  --el-color-primary-light-5: color-mix(in srgb, #a8b1ff 50%, #fff);
+  --el-color-primary-light-7: color-mix(in srgb, #a8b1ff 30%, #fff);
+  --el-color-primary-light-8: color-mix(in srgb, #a8b1ff 20%, #fff);
+  --el-color-primary-light-9: color-mix(in srgb, #a8b1ff 12%, #fff);
+  --el-color-primary-dark-2: color-mix(in srgb, #a8b1ff 80%, #000);
+
+  /* 语义色 */
+  --el-color-success: #3dd68c;
+  --el-color-success-light-3: color-mix(in srgb, #3dd68c 70%, #fff);
+  --el-color-success-light-5: color-mix(in srgb, #3dd68c 50%, #fff);
+  --el-color-success-light-7: color-mix(in srgb, #3dd68c 30%, #fff);
+  --el-color-success-light-8: color-mix(in srgb, #3dd68c 20%, #fff);
+  --el-color-success-light-9: color-mix(in srgb, #3dd68c 12%, #fff);
+  --el-color-success-dark-2: color-mix(in srgb, #3dd68c 80%, #000);
+
+  --el-color-warning: #f9b44e;
+  --el-color-warning-light-3: color-mix(in srgb, #f9b44e 70%, #fff);
+  --el-color-warning-light-5: color-mix(in srgb, #f9b44e 50%, #fff);
+  --el-color-warning-light-7: color-mix(in srgb, #f9b44e 30%, #fff);
+  --el-color-warning-light-8: color-mix(in srgb, #f9b44e 20%, #fff);
+  --el-color-warning-light-9: color-mix(in srgb, #f9b44e 12%, #fff);
+  --el-color-warning-dark-2: color-mix(in srgb, #f9b44e 80%, #000);
+
+  --el-color-danger: #f66f81;
+  --el-color-danger-light-3: color-mix(in srgb, #f66f81 70%, #fff);
+  --el-color-danger-light-5: color-mix(in srgb, #f66f81 50%, #fff);
+  --el-color-danger-light-7: color-mix(in srgb, #f66f81 30%, #fff);
+  --el-color-danger-light-8: color-mix(in srgb, #f66f81 20%, #fff);
+  --el-color-danger-light-9: color-mix(in srgb, #f66f81 12%, #fff);
+  --el-color-danger-dark-2: color-mix(in srgb, #f66f81 80%, #000);
+  --el-color-error: #f66f81;
+  --el-color-error-light-3: color-mix(in srgb, #f66f81 70%, #fff);
+  --el-color-error-light-5: color-mix(in srgb, #f66f81 50%, #fff);
+  --el-color-error-light-7: color-mix(in srgb, #f66f81 30%, #fff);
+  --el-color-error-light-8: color-mix(in srgb, #f66f81 20%, #fff);
+  --el-color-error-light-9: color-mix(in srgb, #f66f81 12%, #fff);
+  --el-color-error-dark-2: color-mix(in srgb, #f66f81 80%, #000);
+
+  --el-color-info: #5c73e7;
+  --el-color-info-light-3: color-mix(in srgb, #5c73e7 70%, #fff);
+  --el-color-info-light-5: color-mix(in srgb, #5c73e7 50%, #fff);
+  --el-color-info-light-7: color-mix(in srgb, #5c73e7 30%, #fff);
+  --el-color-info-light-8: color-mix(in srgb, #5c73e7 20%, #fff);
+  --el-color-info-light-9: color-mix(in srgb, #5c73e7 12%, #fff);
+  --el-color-info-dark-2: color-mix(in srgb, #5c73e7 80%, #000);
+
+  /* 背景 / 填充 / 边框 / 文字 */
+  --el-bg-color: #202127;
+  --el-bg-color-page: #1b1b1f;
+  --el-bg-color-overlay: #202127;
+  --el-fill-color: #2a2b31;
+  --el-fill-color-light: #2e2e32;
+  --el-fill-color-lighter: #202127;
+  --el-fill-color-extra-light: #161618;
+  --el-fill-color-dark: #161618;
+  --el-fill-color-darker: #161618;
+  --el-fill-color-blank: #202127;
+
+  --el-border-color: #3c3f44;
+  --el-border-color-light: #3c3f44;
+  --el-border-color-lighter: #2e2e32;
+  --el-border-color-extra-light: #2e2e32;
+  --el-border-color-dark: #3c3f44;
+  --el-border-color-hover: #3c3f44;
+
+  --el-text-color-primary: #dfdfd6;
+  --el-text-color-regular: #98989f;
+  --el-text-color-secondary: #98989f;
+  --el-text-color-placeholder: #6a6a71;
+  --el-text-color-disabled: #4a4a52;
+
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 20px;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -32,6 +141,8 @@
 body {
   margin: 0;
   min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
 }
 
 h1,
@@ -45,7 +156,7 @@ p {
   min-height: 100vh;
 }
 
-/* Element Plus 微调：统一圆角与主色 */
+/* Element Plus 微调：统一主色 */
 .el-input-number,
 .el-switch {
   --el-color-primary: var(--primary);
