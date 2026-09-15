@@ -25,9 +25,6 @@ const emit = defineEmits<{ remove: [] }>()
 
 const isOnce = computed(() => item.value.period === 'once')
 
-/** 间隔的单位后缀：月周期是「个月」，年周期是「年」 */
-const intervalUnit = computed(() => (item.value.period === 'month' ? '个月' : '年'))
-
 /**
  * 越界提示：不静默改写用户填的年龄（避免调大再调小全局年龄后原值丢失），
  * 而是把「不会触发」这件事显式说出来。
@@ -108,11 +105,7 @@ const amountHint = computed(() => {
       <div class="field">
         <label>周期</label>
         <div class="input-row">
-          <el-select v-model="item.period" class="period-select">
-            <el-option label="仅一次" value="once" />
-            <el-option label="月" value="month" />
-            <el-option label="年" value="year" />
-          </el-select>
+          <!-- 先「每 [n]」再选单位：读作「每 2 个月」 -->
           <template v-if="!isOnce">
             <span class="unit">每</span>
             <el-input-number
@@ -124,8 +117,12 @@ const amountHint = computed(() => {
               :controls-position="'right'"
               class="interval-num"
             />
-            <span class="unit">{{ intervalUnit }}</span>
           </template>
+          <el-select v-model="item.period" class="period-select">
+            <el-option label="仅一次" value="once" />
+            <el-option label="月" value="month" />
+            <el-option label="年" value="year" />
+          </el-select>
         </div>
       </div>
 
@@ -241,11 +238,11 @@ const amountHint = computed(() => {
   gap: 6px;
 }
 .period-select {
-  width: 118px;
+  width: 88px;
   flex: 0 0 auto;
 }
 .interval-num {
-  width: 96px;
+  width: 72px;
   flex: 0 0 auto;
 }
 .unit {

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import App from './App.vue'
 import CashFlowItemRow from './components/CashFlowItemRow.vue'
 import ParameterPanel from './components/ParameterPanel.vue'
@@ -192,6 +193,34 @@ describe('CashFlowItemRow', () => {
     await wrapper.setProps({ modelValue: makeItem({ period: 'month', interval: 2 }) })
     expect(wrapper.findComponent({ name: 'ElSelect' }).props('modelValue')).toBe('month')
     expect(wrapper.findAll('.interval-num')).toHaveLength(1)
+  })
+
+  // 阅读顺序应为「每 [2] 个月」：间隔输入框在下拉框之前
+  it('间隔输入框排在月/年下拉框前面', () => {
+    const wrapper = mountRow({ period: 'month', interval: 2 })
+    const interval = wrapper.find('.interval-num').element
+    const select = wrapper.find('.period-select').element
+
+    expect(
+      interval.compareDocumentPosition(select) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(wrapper.text()).toContain('每')
+  })
+
+  // 曾出现「下拉框是裸的 / 显示空白」的反馈，这里把「显示当前周期」也钉住
+  it('下拉框显示当前周期：月 / 年 / 仅一次', async () => {
+    const wrapper = mountRow({ period: 'month', interval: 2 })
+    await nextTick()
+    expect(wrapper.find('.period-select').text()).toBe('月')
+
+    await wrapper.setProps({ modelValue: makeItem({ period: 'year', interval: 10 }) })
+    await nextTick()
+    expect(wrapper.find('.period-select').text()).toBe('年')
+
+    await wrapper.setProps({ modelValue: makeItem({ period: 'once' }) })
+    await nextTick()
+    expect(wrapper.find('.period-select').text()).toBe('仅一次')
+    expect(wrapper.find('.period-select').exists()).toBe(true)
   })
 
   it('金额提示：周期项摊成年额，仅一次项看单次金额', () => {
