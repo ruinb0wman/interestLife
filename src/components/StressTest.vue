@@ -10,6 +10,8 @@ const running = ref(false)
 const result = ref<McResult | null>(null)
 /** 运行时的输入快照：用于判断已有结果是否已经对不上当前参数 */
 const ranWith = ref<string | null>(null)
+/** 运行时实际用的漂移（普通收益率）：参数已变更时仍显示「本次跑的是什么」 */
+const ranDrift = ref<number | null>(null)
 
 const inputKey = computed(() => JSON.stringify([props.params, config.value]))
 const stale = computed(() => result.value !== null && ranWith.value !== inputKey.value)
@@ -20,6 +22,7 @@ async function run() {
   const key = inputKey.value
   try {
     result.value = monteCarlo(props.params, config.value)
+    ranDrift.value = props.params.annualReturn
     ranWith.value = key
   } finally {
     running.value = false
@@ -37,9 +40,17 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
   <div class="card">
     <div class="card-title">蒙特卡洛压力测试</div>
     <p class="card-hint">
-      每年收益率 ~ N(普通收益率, 收益波动率)；每个支出项的涨幅 ~ N(该项涨幅, 通胀波动率) 逐年随机游走
-      （收入项涨幅固定）。统计“全程本金从未为负”的成功率与最终资产分布。
+      每年收益率 ~ N(<b>普通收益率 {{ formatPercent(params.annualReturn) }}</b>, 收益波动率)；
+      每个支出项的涨幅 ~ N(该项涨幅, 通胀波动率) 逐年随机游走（收入项涨幅固定）。
+      统计“全程本金从未为负”的成功率与最终资产分布。
       与主图一致，某次模拟一旦资不抵债就在当年截断，缺口计入最终资产，不再推演负债雪球。
+    </p>
+    <p class="card-hint card-hint-warn">
+      注意口径：均值取的是<b>普通情景（{{ formatPercent(params.annualReturn) }}）</b>，
+      <b>不是悲观情景（{{ formatPercent(params.pessimisticReturn) }}）</b>。
+      因此它衡量的是「围绕普通收益率波动」的风险（σ 越大越悲观）；
+      若怀疑实际长期收益率本就达不到普通情景，请直接看<b>悲观情景</b>的结论，
+      那张卡片与本测试的成功率不是一回事。
     </p>
     <div class="mc-grid">
       <div class="param-item">
@@ -89,6 +100,8 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
         </div>
       </div>
       <p class="mc-note">
+        本次模拟基准：普通收益率 {{ formatPercent(ranDrift ?? props.params.annualReturn) }}（非悲观情景）
+        · 收益波动率 σ = {{ config.returnVolatility }}。
         成功率为 {{ formatPercent(result.successRate) }}；
         最终资产最低 {{ formatYuan(result.worstFinal) }}、中位 {{ formatYuan(result.p50Final) }}。
         <template v-if="result.p50DepletedAge !== null">
@@ -119,6 +132,16 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
   font-size: 12px;
   color: var(--text-3);
   margin: 4px 0 14px;
+}
+.card-hint-warn {
+  color: var(--warning);
+  border-left: 2px solid var(--warning);
+  padding-left: 10px;
+  margin-top: -6px;
+}
+.card-hint b {
+  color: inherit;
+  font-weight: 600;
 }
 .mc-grid {
   display: grid;
