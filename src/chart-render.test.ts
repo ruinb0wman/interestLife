@@ -15,7 +15,7 @@ import { DEFAULT_PARAMS, createItem, simulate, simulateScenario, type SimParams 
 
 echarts.use([SVGRenderer])
 
-/** 带一次性支出（柱状）与周期换车（虚线）的完整配置，覆盖 line / bar / scatter 三种系列 */
+/** 含一次性支出的完整配置：覆盖本金三线 + 耗尽点 + 两条收支合计线（line / scatter） */
 function chartInput() {
   const params: SimParams = {
     ...DEFAULT_PARAMS,
@@ -25,8 +25,6 @@ function chartInput() {
     rows: simulate(params),
     optimisticRows: simulateScenario(params, params.optimisticReturn),
     pessimisticRows: simulateScenario(params, params.pessimisticReturn),
-    incomes: params.incomes,
-    expenses: params.expenses,
   }
 }
 
@@ -61,7 +59,7 @@ describe('图表渲染所需的 echarts 注册', () => {
     expect(missing).toEqual([])
   })
 
-  it('能成功建出系列：line / bar / scatter 都被真正渲染', () => {
+  it('能成功建出系列：line / scatter 都被真正渲染', () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
 
@@ -70,9 +68,10 @@ describe('图表渲染所需的 echarts 注册', () => {
 
     const option = chart.getOption() as { series?: Array<{ type?: string }> }
     expect(option.series?.length).toBeGreaterThan(0)
-    expect(new Set(option.series?.map((s) => s.type))).toEqual(
-      new Set(['line', 'bar', 'scatter']),
-    )
+    expect(new Set(option.series?.map((s) => s.type))).toEqual(new Set(['line', 'scatter']))
+    // 合并后的两条收支线确实建了出来
+    const names = option.series?.map((s) => (s as { name?: string }).name)
+    expect(names).toEqual(expect.arrayContaining(['收入合计', '支出合计']))
 
     chart.dispose()
     host.remove()

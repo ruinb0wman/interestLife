@@ -1,30 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { buildChartOption, type ChartOptionInput } from './chart-option'
 import {
+  cloneParams,
   DEFAULT_PARAMS,
   createItem,
   simulate,
   simulateScenario,
-  type CashFlowItem,
   type SimParams,
   type YearRow,
 } from './lib'
-
-/** 收支项工厂：默认全年 0 元，仅用于给图表提供名称与周期 */
-function item(overrides: Partial<CashFlowItem> = {}): CashFlowItem {
-  return {
-    id: 'chart-item',
-    name: '项',
-    amount: 0,
-    period: 'month',
-    interval: 1,
-    growth: 0,
-    startAge: 30,
-    endAge: 90,
-    enabled: true,
-    ...overrides,
-  }
-}
 
 /** 手写一行，便于精确构造边界（破产截断、长度不齐） */
 function row(
@@ -97,12 +81,13 @@ describe('buildChartOption：时间轴对齐', () => {
   })
 })
 
-describe('buildChartOption：动态收支项系列', () => {
-  it('每个有数据的收支项各生成一条系列，名称取项名', () => {
+describe('buildChartOption：合并后的年度收支', () => {
+  it('收支项合并为「收入合计 / 支出合计」两条线，不再逐项生成系列', () => {
     const opt = loose({
-      rows: [row(30, 100, { incomes: [12_000, 0], expenses: [36_000, 0] })],
-      incomes: [item({ name: '工资' }), item({ name: '从不触发的收入' })],
-      expenses: [item({ name: '生活费' }), item({ name: '从未触发' })],
+      rows: [
+        row(30, 100, { incomes: [12_000], incomeTotal: 12_000, expenses: [36_000], expenseTotal: 36_000 }),
+        row(31, 90, { expenses: [24_000], expenseTotal: 24_000 }),
+      ],
     })
 
     expect(seriesNames(opt)).toEqual([
@@ -110,72 +95,49 @@ describe('buildChartOption：动态收支项系列', () => {
       '本金·普通',
       '本金·悲观',
       '耗尽点',
-      '工资',
-      '生活费',
+      '收入合计',
+      '支出合计',
     ])
+    expect(seriesOf(opt, '收入合计').data).toEqual([12_000, 0])
+    expect(seriesOf(opt, '支出合计').data).toEqual([36_000, 24_000])
   })
 
-  it('全为 0（未触发 / 已停用）的项不占用图例与色号', () => {
+  it('两条线都是折线并挂在右轴', () => {
     const opt = loose({
-      rows: [row(30, 100, { expenses: [0, 500] })],
-      expenses: [item({ name: '停用项', enabled: false }), item({ name: '仅一次', period: 'once' })],
+      rows: [row(30, 100, { incomes: [1], incomeTotal: 1, expenses: [2], expenseTotal: 2 })],
     })
 
-    expect(seriesNames(opt)).not.toContain('停用项')
-    expect(seriesNames(opt)).toContain('仅一次')
+    for (const name of ['收入合计', '支出合计']) {
+      expect(seriesOf(opt, name).type).toBe('line')
+      expect(seriesOf(opt, name).yAxisIndex).toBe(1)
+    }
+    for (const name of ['本金·乐观', '本金·普通', '本金·悲观', '耗尽点']) {
+      expect(seriesOf(opt, name).yAxisIndex ?? 0).toBe(0)
+    }
   })
 
-  it('「仅一次」的支出用柱状，其余收支项用虚线', () => {
-    const opt = loose({
-      rows: [row(30, 100, { incomes: [1], expenses: [2, 3] })],
-      incomes: [item({ name: '工资' })],
-      expenses: [item({ name: '生活费' }), item({ name: '大病', period: 'once' })],
-    })
+  it('全为 0（无收支 / 全部停用）的合并系列不占用图例与色号', () => {
+    const opt = loose({ rows: [row(30, 100)] })
 
-    expect(seriesOf(opt, '工资').type).toBe('line')
-    expect(seriesOf(opt, '生活费').type).toBe('line')
-    expect(seriesOf(opt, '大病').type).toBe('bar')
-  })
-
-  it('跨收入/支出重名的项自动去重，避免图例联动串名', () => {
-    const opt = loose({
-      rows: [row(30, 100, { incomes: [1, 2], expenses: [3] })],
-      incomes: [item({ name: '同名' }), item({ name: '同名' })],
-      expenses: [item({ name: '同名' })],
-    })
-
-    expect(seriesNames(opt)).toEqual([
-      '本金·乐观',
-      '本金·普通',
-      '本金·悲观',
-      '耗尽点',
-      '同名',
-      '同名(2)',
-      '同名(3)',
-    ])
-    // 图例与系列一一对应
+    expect(seriesNames(opt)).not.toContain('收入合计')
+    expect(seriesNames(opt)).not.toContain('支出合计')
     expect(opt.legend.data).toEqual(seriesNames(opt))
   })
 
-  it('名称为空的项回退为「收入N / 支出N」', () => {
-    const opt = loose({
-      rows: [row(30, 100, { incomes: [1], expenses: [2] })],
-      incomes: [item({ name: '   ' })],
-      expenses: [item({ name: '' })],
-    })
+  it('只有支出时会单独生成支出合计', () => {
+    const opt = loose({ rows: [row(30, 100, { expenses: [5] })] })
 
-    expect(seriesNames(opt)).toContain('收入1')
-    expect(seriesNames(opt)).toContain('支出1')
+    expect(seriesNames(opt)).toContain('支出合计')
+    expect(seriesNames(opt)).not.toContain('收入合计')
   })
 
-  it('收支项超出普通情景被模拟到的年份时补 null', () => {
+  it('被模拟年份之外的年份补 null（耗尽后断开）', () => {
     const opt = loose({
       rows: [row(30, 100, { expenses: [5] })],
       optimisticRows: [row(30, 100), row(31, 90), row(32, 80)],
-      expenses: [item({ name: '生活费' })],
     })
 
-    expect(seriesOf(opt, '生活费').data).toEqual([5, null, null])
+    expect(seriesOf(opt, '支出合计').data).toEqual([5, null, null])
   })
 })
 
@@ -208,21 +170,14 @@ describe('buildChartOption：图例与系列保持一致', () => {
     expect(opt.legend.data).toEqual(seriesNames(opt))
   })
 
-  it('三种图表类型都被用到：line / scatter / bar', () => {
-    const opt = loose({
-      rows: [row(30, 100, { expenses: [1] })],
-      expenses: [item({ name: '大病', period: 'once' })],
-    })
-    expect(new Set(opt.series.map((s) => s.type))).toEqual(new Set(['line', 'scatter', 'bar']))
+  it('只有 line / scatter 两种系列（柱状随收支项合并一起移除）', () => {
+    const opt = loose({ rows: [row(30, 100, { expenses: [1] })] })
+    expect(new Set(opt.series.map((s) => s.type))).toEqual(new Set(['line', 'scatter']))
   })
 
-  it('收支项系列挂在右轴，本金与耗尽点挂在左轴', () => {
-    const opt = loose({
-      rows: [row(30, 100, { incomes: [1], expenses: [2] })],
-      incomes: [item({ name: '工资' })],
-      expenses: [item({ name: '生活费' })],
-    })
-    for (const name of ['工资', '生活费']) {
+  it('合并后的两条收支线也挂在右轴，本金与耗尽点挂在左轴', () => {
+    const opt = loose({ rows: [row(30, 100, { incomes: [1], expenses: [2] })] })
+    for (const name of ['收入合计', '支出合计']) {
       expect(seriesOf(opt, name).yAxisIndex).toBe(1)
     }
     for (const name of ['本金·乐观', '本金·普通', '本金·悲观', '耗尽点']) {
@@ -278,8 +233,6 @@ describe('buildChartOption：与真实模拟结果联通', () => {
       rows: neutral,
       optimisticRows: optimistic,
       pessimisticRows: pessimistic,
-      incomes: params.incomes,
-      expenses: params.expenses,
     })
 
     // 时间轴铺到 90 岁，长度取最长情景
@@ -304,26 +257,49 @@ describe('buildChartOption：与真实模拟结果联通', () => {
       [neutral[neutral.length - 1].age, 0],
       [pessimistic[pessimistic.length - 1].age, 0],
     ])
-    // 默认支出项（生活费、换车）都出现在图例里
-    expect(seriesNames(opt)).toEqual(expect.arrayContaining(['生活费', '换车']))
+    // 收支项已合并：图例里只有两条合计线，不再出现具体项名
+    expect(seriesNames(opt)).toEqual([
+      '本金·乐观',
+      '本金·普通',
+      '本金·悲观',
+      '耗尽点',
+      '收入合计',
+      '支出合计',
+    ])
   })
 
-  it('默认参数的换车项在各触发年形成尖峰（每 10 年一次）', () => {
-    const params = { ...DEFAULT_PARAMS }
-    const rows = simulate(params)
-    const opt = loose({ rows, expenses: params.expenses })
+  it('支出合计正好等于各支出项之和：换车在 40/50/…/90 形成尖峰', () => {
+    const withCar = cloneParams(DEFAULT_PARAMS)
+    const livingOnly = cloneParams(DEFAULT_PARAMS)
+    livingOnly.expenses = [livingOnly.expenses[0]] // 只留「生活费」
 
-    const data = seriesOf(opt, '换车').data
-    const spikeAges = rows.filter((_, i) => typeof data[i] === 'number' && data[i] !== 0).map((r) => r.age)
-    expect(spikeAges).toEqual([40, 50, 60, 70, 80, 90])
+    const rows = simulate(withCar)
+    const total = seriesOf(loose({ rows }), '支出合计').data
+    const livingTotal = seriesOf(loose({ rows: simulate(livingOnly) }), '支出合计').data
+
+    // 差额即「换车」那一项，只应在触发年非零
+    const carSpike = rows.map((_, i) => (total[i] as number) - (livingTotal[i] as number))
+    expect(rows.filter((_, i) => carSpike[i] !== 0).map((r) => r.age)).toEqual([
+      40, 50, 60, 70, 80, 90,
+    ])
+    expect(carSpike.every((v) => v >= 0)).toBe(true)
+    // 每年都等于该年的 expenseTotal
+    expect(total).toEqual(rows.map((r) => r.expenseTotal))
   })
 
-  it('createItem 的一次性支出能渲染为柱状系列', () => {
-    const params: SimParams = {
-      ...DEFAULT_PARAMS,
-      expenses: [...DEFAULT_PARAMS.expenses, createItem('oneoff', 30, 90)],
-    }
-    const opt = loose({ rows: simulate(params), expenses: params.expenses })
-    expect(seriesOf(opt, '大病/意外').type).toBe('bar')
+  it('一次性支出并入支出合计（只在发生那年抬高曲线）', () => {
+    const withOneOff = cloneParams(DEFAULT_PARAMS)
+    withOneOff.expenses = [...withOneOff.expenses, createItem('oneoff', 30, 90)]
+
+    const rows = simulate(withOneOff)
+    const baseRows = simulate(DEFAULT_PARAMS)
+    const withData = seriesOf(loose({ rows }), '支出合计').data
+    const base = seriesOf(loose({ rows: baseRows }), '支出合计').data
+
+    const at60 = rows.findIndex((r) => r.age === 60)
+    const at61 = rows.findIndex((r) => r.age === 61)
+    expect((withData[at60] as number) - (base[at60] as number)).toBe(200_000)
+    expect(withData[at61]).toBe(base[at61])
+    expect(withData[at61]).toBe(rows[at61].expenseTotal)
   })
 })

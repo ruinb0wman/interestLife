@@ -8,13 +8,16 @@
 //
 // 当前的传递依赖（已用真实渲染逐项实测，echarts 6.1）：
 //   TooltipComponent  → use(installAxisPointer)
-//   图表 install       → 自带 cartesian2d / xAxis / yAxis / grid（实测：仅注册
-//                        Line/Bar/Scatter 而不注册 GridComponent，grid 与 xAxis 依然存在）
+//   图表 install       → 自带 cartesian2d / xAxis / yAxis / grid（实测：仅注册 Line/Scatter
+//                        而不注册 GridComponent，grid 与 xAxis 依然存在）
 //   因此下面的 GridComponent 对当前配置而言是冗余的，列出来是为了显式表意、
 //   并在以后只用纯图表类型/只改系列组合时提供保护，不要以为它没用而删掉。
 //   CanvasRenderer    → 画布渲染器（测试环境用 SVGRenderer 替代，见 chart-render.test.ts）
+//
+// 注：收支项合并成「收入合计 / 支出合计」两条折线后，BarChart 不再被用到，
+// 已一并移除（需要柱状系列时记得在这里补回来，并同步 chart-render.test.ts 的期望）。
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, ScatterChart } from 'echarts/charts'
+import { LineChart, ScatterChart } from 'echarts/charts'
 import {
   GridComponent,
   LegendComponent,
@@ -22,7 +25,7 @@ import {
   TooltipComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import type { BarSeriesOption, LineSeriesOption, ScatterSeriesOption } from 'echarts/charts'
+import type { LineSeriesOption, ScatterSeriesOption } from 'echarts/charts'
 import type {
   GridComponentOption,
   LegendComponentOption,
@@ -32,7 +35,6 @@ import type {
 
 echarts.use([
   LineChart,
-  BarChart,
   ScatterChart,
   GridComponent,
   TooltipComponent,
@@ -46,7 +48,6 @@ export { echarts }
 /** 现金流图用到的全部图表/组件选项类型 */
 export type ChartOption = echarts.ComposeOption<
   | LineSeriesOption
-  | BarSeriesOption
   | ScatterSeriesOption
   | GridComponentOption
   | TooltipComponentOption
@@ -54,4 +55,4 @@ export type ChartOption = echarts.ComposeOption<
   | MarkLineComponentOption
 >
 
-export type { BarSeriesOption, LineSeriesOption, ScatterSeriesOption }
+export type { LineSeriesOption, ScatterSeriesOption }

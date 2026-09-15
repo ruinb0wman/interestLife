@@ -2,15 +2,12 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { buildChartOption } from '../chart-option'
 import { echarts } from '../chart-setup'
-import type { CashFlowItem, YearRow } from '../lib'
+import type { YearRow } from '../lib'
 
 const props = defineProps<{
   rows: YearRow[]
   optimisticRows?: YearRow[]
   pessimisticRows?: YearRow[]
-  /** 收支项定义：用于图例名称与「仅一次」的柱状呈现 */
-  incomes?: CashFlowItem[]
-  expenses?: CashFlowItem[]
 }>()
 
 const el = ref<HTMLDivElement | null>(null)
@@ -42,7 +39,7 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.rows, props.optimisticRows, props.pessimisticRows, props.incomes, props.expenses],
+  () => [props.rows, props.optimisticRows, props.pessimisticRows],
   render,
 )
 

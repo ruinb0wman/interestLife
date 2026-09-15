@@ -1,16 +1,13 @@
 // 现金流图的 ECharts 配置构造：纯函数，与 DOM / 实例生命周期解耦，便于单测。
-import type { CashFlowItem, YearRow } from './lib'
+import type { YearRow } from './lib'
 import { formatWanShort } from './format'
-import type { BarSeriesOption, ChartOption, LineSeriesOption } from './chart-setup'
+import type { LineSeriesOption, ChartOption } from './chart-setup'
 
-/** 三个情景的逐年数据 + 收支项定义。optimistic/pessimistic 缺省时退化为普通（单情景） */
+/** 三个情景的逐年数据。optimistic/pessimistic 缺省时退化为普通（单情景） */
 export interface ChartOptionInput {
   rows: YearRow[]
   optimisticRows?: YearRow[]
   pessimisticRows?: YearRow[]
-  /** 收入项定义（与 YearRow.incomes 同序），用于图例名称与「仅一次」的柱状呈现 */
-  incomes?: CashFlowItem[]
-  expenses?: CashFlowItem[]
 }
 
 const PRINCIPAL_COLORS = {
@@ -19,54 +16,29 @@ const PRINCIPAL_COLORS = {
   pessimistic: '#f9b44e',
 }
 
-/** 收支项的调色板：项数超出后循环取用 */
-const ITEM_COLORS = [
-  '#38bdf8',
-  '#c8abfa',
-  '#fb923c',
-  '#f0abfc',
-  '#4ade80',
-  '#facc15',
-  '#22d3ee',
-  '#f87171',
-  '#a3e635',
-  '#818cf8',
-  '#e879f9',
-  '#2dd4bf',
-]
+/**
+ * 年度收支的合并系列：**所有收入项合成一条、所有支出项合成一条**，
+ * 不再逐项画线（项数多时右轴会糊成一片，且各项的周期差异看图也读不出来）。
+ * 颜色刻意避开三个本金情景的绿/紫/琥珀，避免与左轴曲线混淆。
+ */
+const CASHFLOW_COLORS = {
+  income: '#22d3ee',
+  expense: '#f0abfc',
+}
 
-/** 某项的逐年金额；超出该情景被模拟到的年份时补 null，让曲线在耗尽处自然断开 */
-function pickItem(
-  list: YearRow[],
-  key: 'incomes' | 'expenses',
-  index: number,
-  length: number,
-): Array<number | null> {
-  return Array.from({ length }, (_, i) => (list[i] ? (list[i][key][index] ?? 0) : null))
+/** 会被画成系列的数值列 */
+type SeriesKey = 'endPrincipal' | 'incomeTotal' | 'expenseTotal'
+
+/**
+ * 取某列数据；超出该情景被模拟到的年份时补 null，
+ * 让曲线在耗尽处自然断开而不是掉到 0。
+ */
+function pick(list: YearRow[], key: SeriesKey, length: number): Array<number | null> {
+  return Array.from({ length }, (_, i) => (list[i] ? list[i][key] : null))
 }
 
 function hasNonZero(data: Array<number | null>): boolean {
   return data.some((v) => typeof v === 'number' && v !== 0)
-}
-
-/**
- * 图例名去重：收支两个列表共用一个已用名集合，避免「收入/支出同名」时
- * ECharts 把两个 series 当成同一个（图例点击会联动、tooltip 会串名）。
- */
-function uniqueNames(items: CashFlowItem[], fallback: string, used: Map<string, number>): string[] {
-  return items.map((item, index) => {
-    const base = item.name.trim() || `${fallback}${index + 1}`
-    const seen = used.get(base) ?? 0
-    used.set(base, seen + 1)
-    return seen === 0 ? base : `${base}(${seen + 1})`
-  })
-}
-
-interface ItemSpec {
-  name: string
-  data: Array<number | null>
-  /** 仅一次的支出用柱状呈现，其余用虚线 */
-  oneOff: boolean
 }
 
 export function buildChartOption(input: ChartOptionInput): ChartOption {
@@ -79,12 +51,10 @@ export function buildChartOption(input: ChartOptionInput): ChartOption {
   // 较短的情景用 null 补齐，这样每条曲线在各自耗尽的那一年自然断开。
   const length = Math.max(rows.length, optimisticRows.length, pessimisticRows.length)
   const ages = Array.from({ length }, (_, i) => startAge + i)
-  const pick = (list: YearRow[], key: 'endPrincipal') =>
-    Array.from({ length }, (_, i) => (list[i] ? (list[i][key] as number) : null))
 
-  const main = pick(rows, 'endPrincipal')
-  const optimistic = pick(optimisticRows, 'endPrincipal')
-  const pessimistic = pick(pessimisticRows, 'endPrincipal')
+  const main = pick(rows, 'endPrincipal', length)
+  const optimistic = pick(optimisticRows, 'endPrincipal', length)
+  const pessimistic = pick(pessimisticRows, 'endPrincipal', length)
 
   // 耗尽点：每个情景最后一个被模拟到的年份（年末本金为负即已耗尽）
   const depletedPoints: Array<[number, number]> = []
@@ -93,49 +63,34 @@ export function buildChartOption(input: ChartOptionInput): ChartOption {
     if (last && last.endPrincipal < 0) depletedPoints.push([last.age, 0])
   }
 
-  const incomes = input.incomes ?? []
-  const expenses = input.expenses ?? []
-  const used = new Map<string, number>()
-  const incomeNames = uniqueNames(incomes, '收入', used)
-  const expenseNames = uniqueNames(expenses, '支出', used)
-
-  const specs: ItemSpec[] = []
-  incomes.forEach((_item, index) => {
-    const data = pickItem(rows, 'incomes', index, length)
-    if (hasNonZero(data)) specs.push({ name: incomeNames[index], data, oneOff: false })
-  })
-  expenses.forEach((item, index) => {
-    const data = pickItem(rows, 'expenses', index, length)
-    if (hasNonZero(data)) {
-      specs.push({ name: expenseNames[index], data, oneOff: item.period === 'once' })
-    }
-  })
-
-  // 只在有数据时占一个色号，避免「被过滤掉的项」把调色板空耗掉
-  const itemSeries: Array<LineSeriesOption | BarSeriesOption> = specs.map((spec, index) => {
-    const color = ITEM_COLORS[index % ITEM_COLORS.length]
-    if (spec.oneOff) {
-      const series: BarSeriesOption = {
-        name: spec.name,
-        type: 'bar',
-        data: spec.data,
-        itemStyle: { color },
-        yAxisIndex: 1,
-        barMaxWidth: 12,
-      }
-      return series
-    }
-    const series: LineSeriesOption = {
-      name: spec.name,
+  // 年度收支：只按「收入合计 / 支出合计」两条线呈现（只取普通情景）。
+  // 全年为 0 的系列不占图例，也不占色号。
+  const cashflowSeries: LineSeriesOption[] = []
+  if (hasNonZero(pick(rows, 'incomeTotal', length))) {
+    cashflowSeries.push({
+      name: '收入合计',
       type: 'line',
-      data: spec.data,
+      data: pick(rows, 'incomeTotal', length),
       symbol: 'none',
       yAxisIndex: 1,
-      lineStyle: { width: 1.5, type: 'dashed', color },
-      itemStyle: { color },
-    }
-    return series
-  })
+      lineStyle: { width: 1.5, type: 'dashed', color: CASHFLOW_COLORS.income },
+      itemStyle: { color: CASHFLOW_COLORS.income },
+    })
+  }
+  if (hasNonZero(pick(rows, 'expenseTotal', length))) {
+    cashflowSeries.push({
+      name: '支出合计',
+      type: 'line',
+      data: pick(rows, 'expenseTotal', length),
+      symbol: 'none',
+      yAxisIndex: 1,
+      lineStyle: { width: 2, color: CASHFLOW_COLORS.expense },
+      itemStyle: { color: CASHFLOW_COLORS.expense },
+    })
+  }
+
+  // 图例与系列一一对应（s.name 在类型上是可选的，这里收回成 string）
+  const cashflowLegend = cashflowSeries.flatMap((s) => (typeof s.name === 'string' ? [s.name] : []))
 
   return {
     color: [PRINCIPAL_COLORS.neutral, PRINCIPAL_COLORS.optimistic, PRINCIPAL_COLORS.pessimistic],
@@ -163,7 +118,7 @@ export function buildChartOption(input: ChartOptionInput): ChartOption {
       top: 0,
       type: 'scroll',
       textStyle: { color: '#98989f' },
-      data: ['本金·乐观', '本金·普通', '本金·悲观', '耗尽点', ...specs.map((s) => s.name)],
+      data: ['本金·乐观', '本金·普通', '本金·悲观', '耗尽点', ...cashflowLegend],
     },
     grid: { left: 80, right: 80, top: 46, bottom: 30 },
     xAxis: {
@@ -235,7 +190,7 @@ export function buildChartOption(input: ChartOptionInput): ChartOption {
         yAxisIndex: 0,
         z: 5,
       },
-      ...itemSeries,
+      ...cashflowSeries,
     ],
   }
 }

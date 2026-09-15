@@ -190,8 +190,6 @@ async function copyShareLink() {
       :rows="rows"
       :optimistic-rows="optimisticRows"
       :pessimistic-rows="pessimisticRows"
-      :incomes="params.incomes"
-      :expenses="params.expenses"
     />
 
     <StatCards
