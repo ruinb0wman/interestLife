@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Agent 计划 / 草稿产物（pi 的 .pi/plans 等）：仅本地保留，不进仓库
+.pi/
