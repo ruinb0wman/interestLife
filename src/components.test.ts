@@ -206,7 +206,6 @@ describe('CashFlowItemRow', () => {
     ).toBeTruthy()
     expect(wrapper.text()).toContain('每')
   })
-
   // 曾出现「下拉框是裸的 / 显示空白」的反馈，这里把「显示当前周期」也钉住
   it('下拉框显示当前周期：月 / 年 / 仅一次', async () => {
     const wrapper = mountRow({ period: 'month', interval: 2 })
@@ -221,6 +220,47 @@ describe('CashFlowItemRow', () => {
     await nextTick()
     expect(wrapper.find('.period-select').text()).toBe('仅一次')
     expect(wrapper.find('.period-select').exists()).toBe(true)
+  })
+
+  // 曾出现「周期下拉框在页面上看不到」的反馈：当时是固定宽度被 .field .el-input-number
+  // 的 width:100% 覆盖，把下拉框顶出格子、被右侧字段的输入框盖住。
+  // 宽度现在挂在普通 wrapper span 上，这里断言 wrapper 确实存在且里面就是那个控件。
+  it('周期下拉框与间隔输入框各有自己的定宽 wrapper', async () => {
+    const wrapper = mountRow({ period: 'month', interval: 2 })
+    const intervalBox = wrapper.find('.interval-box')
+    const periodBox = wrapper.find('.period-box')
+
+    expect(intervalBox.exists()).toBe(true)
+    expect(periodBox.exists()).toBe(true)
+    expect(intervalBox.find('.el-input-number').exists()).toBe(true)
+    expect(periodBox.find('.el-select').exists()).toBe(true)
+    // 「每」在 wrapper 外面，避免被一起框成定宽
+    expect(intervalBox.text()).not.toContain('每')
+
+    await wrapper.setProps({ modelValue: makeItem({ period: 'once' }) })
+    expect(wrapper.find('.interval-box').exists()).toBe(false)
+    expect(wrapper.find('.period-box').exists()).toBe(true)
+  })
+
+  it('点开周期下拉框后月/年/仅一次三个选项都可见可选', async () => {
+    const wrapper = mountRow({ period: 'month', interval: 2 })
+    await nextTick()
+
+    const trigger = wrapper.find('.period-select .el-select__wrapper')
+    expect(trigger.exists()).toBe(true)
+    await trigger.trigger('click')
+    await nextTick()
+
+    const input = wrapper.find('.period-select input[role="combobox"]')
+    expect(input.attributes('aria-expanded')).toBe('true')
+
+    // 选项是 teleport 到 body 的，只能从 document 上取
+    const labels = [...document.querySelectorAll('.el-select-dropdown__item')].map((el) =>
+      el.textContent?.trim(),
+    )
+    expect(labels).toContain('仅一次')
+    expect(labels).toContain('月')
+    expect(labels).toContain('年')
   })
 
   it('金额提示：周期项摊成年额，仅一次项看单次金额', () => {

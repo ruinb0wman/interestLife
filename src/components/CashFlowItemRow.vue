@@ -105,24 +105,31 @@ const amountHint = computed(() => {
       <div class="field">
         <label>周期</label>
         <div class="input-row">
-          <!-- 先「每 [n]」再选单位：读作「每 2 个月」 -->
+          <!-- 先「每 [n]」再选单位：读作「每 2 个月」
+               固定宽度必须挂在普通 span 上，不能直接写在 el-input-number / el-select 上：
+               下面的 .field .el-input-number { width: 100% } 特异性更高，会把这里的宽度覆盖成
+               「擑满整行」，把下拉框顶出格子、被右边字段的输入框盖住（看上去就是「下拉框没了」）。 -->
           <template v-if="!isOnce">
             <span class="unit">每</span>
-            <el-input-number
-              v-model="item.interval"
-              :min="1"
-              :max="1200"
-              :precision="0"
-              :step="1"
-              :controls-position="'right'"
-              class="interval-num"
-            />
+            <span class="interval-box">
+              <el-input-number
+                v-model="item.interval"
+                :min="1"
+                :max="1200"
+                :precision="0"
+                :step="1"
+                :controls-position="'right'"
+                class="interval-num"
+              />
+            </span>
           </template>
-          <el-select v-model="item.period" class="period-select">
-            <el-option label="仅一次" value="once" />
-            <el-option label="月" value="month" />
-            <el-option label="年" value="year" />
-          </el-select>
+          <span class="period-box">
+            <el-select v-model="item.period" class="period-select">
+              <el-option label="仅一次" value="once" />
+              <el-option label="月" value="month" />
+              <el-option label="年" value="year" />
+            </el-select>
+          </span>
         </div>
       </div>
 
@@ -216,14 +223,19 @@ const amountHint = computed(() => {
 .row-head .el-button {
   margin-left: auto;
 }
+/* 用 grid 而不是 flex：宽度可预测，stretching 的百分比子元素（width:100% 的输入框）
+   不会把定宽的下拉框顶出格子。minmax(0, …) 允许格子窄于内容而不溢出。 */
 .row-fields {
-  align-items: flex-end;
+  display: grid;
+  grid-template-columns: 1.4fr 1.15fr 1.15fr 0.85fr 0.85fr;
   gap: 14px;
+  align-items: end;
 }
 .field {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 .field label {
   font-size: 12px;
@@ -236,14 +248,26 @@ const amountHint = computed(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
-.period-select {
-  width: 88px;
-  flex: 0 0 auto;
-}
-.interval-num {
+/* 固定宽度挂在 wrapper 上（见模板里的注释），这样不受 element-plus 自身宽度规则影响 */
+.interval-box {
   width: 72px;
   flex: 0 0 auto;
+}
+.period-box {
+  width: 92px;
+  flex: 0 0 auto;
+}
+.interval-box .el-input-number,
+.period-box .el-select {
+  width: 100%;
+}
+.period-select {
+  width: 100%;
+}
+.interval-num {
+  width: 100%;
 }
 .unit {
   font-size: 12px;
@@ -265,12 +289,14 @@ const amountHint = computed(() => {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-@media (max-width: 900px) {
+@media (max-width: 1200px) {
   .row-fields {
-    align-items: stretch;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .field {
-    flex: 1 1 150px;
+}
+@media (max-width: 640px) {
+  .row-fields {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

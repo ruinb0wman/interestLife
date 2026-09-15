@@ -376,7 +376,6 @@ describe('simulate：边界与开关', () => {
 describe('回归：默认参数与旧专用模型逐年等价', () => {
   const OLD_START_AGE = 30
   const OLD_END_AGE = 90
-  const OLD_PRINCIPAL = 500_000
   const OLD_RETURN = 0.08
   const OLD_SALARY = 3_000
   const OLD_SALARY_GROWTH = 0.03
@@ -388,10 +387,15 @@ describe('回归：默认参数与旧专用模型逐年等价', () => {
   const OLD_CAR_INTERVAL = 10
   const OLD_CAR_RESIDUAL = 0.25
 
-  /** 旧模型（v1）单年递推：工资 / 生活费 / 换车三件套 */
-  function expectedRow(age: number, principal: number) {
+  /**
+   * 旧模型（v1）单年递推：工资 / 生活费 / 换车三件套。
+   * 传入当年年初本金（取模拟自己的 row.startPrincipal），逐项比对当年金额：
+   * 这样验证的是「公式」本身，不会被换车金额按分四舍五入后的复利反馈干扰
+   * （累积差额会随复利放大，用重算的 principal 比会让 60 年后的末值差到几毛钱）。
+   */
+  function expectedRow(age: number, startPrincipal: number) {
     const yearsSince = age - OLD_START_AGE
-    const investmentIncome = principal * OLD_RETURN
+    const investmentIncome = startPrincipal * OLD_RETURN
     const salary =
       age <= OLD_SALARY_STOP_AGE ? OLD_SALARY * 12 * (1 + OLD_SALARY_GROWTH) ** yearsSince : 0
     const living = OLD_LIVING * 12 * (1 + OLD_LIVING_GROWTH) ** yearsSince
@@ -406,7 +410,7 @@ describe('回归：默认参数与旧专用模型逐年等价', () => {
       salary,
       living,
       carNet,
-      endPrincipal: principal + investmentIncome + salary - living - carNet,
+      endPrincipal: startPrincipal + investmentIncome + salary - living - carNet,
     }
   }
 
@@ -416,20 +420,34 @@ describe('回归：默认参数与旧专用模型逐年等价', () => {
 
     expect(rows).toHaveLength(OLD_END_AGE - OLD_START_AGE + 1)
 
-    let principal = OLD_PRINCIPAL
     for (const row of rows) {
-      const expected = expectedRow(row.age, principal)
+      const expected = expectedRow(row.age, row.startPrincipal)
 
+      // 工资 / 生活费 / 投资收益与旧公式逐字一致（6 位小数）
       expect(row.investmentIncome).toBeCloseTo(expected.investmentIncome, 6)
       expect(row.incomes[0]).toBeCloseTo(expected.salary, 6)
       expect(row.expenses[0]).toBeCloseTo(expected.living, 6)
-      expect(row.expenses[1]).toBeCloseTo(expected.carNet, 6)
       expect(row.incomeTotal).toBeCloseTo(expected.salary, 6)
-      expect(row.expenseTotal).toBeCloseTo(expected.living + expected.carNet, 6)
-      expect(row.endPrincipal).toBeCloseTo(expected.endPrincipal, 6)
-
-      principal = expected.endPrincipal
+      // 换车模板的金额按「分」四舍五入（避免输入框显示 82846.65940584034），
+      // 所以这两项对齐到分：差 0.01 元，而任何逻辑错误都是千元级
+      expect(row.expenses[1]).toBeCloseTo(expected.carNet, 2)
+      expect(row.expenseTotal).toBeCloseTo(expected.living + expected.carNet, 2)
+      expect(row.endPrincipal).toBeCloseTo(expected.endPrincipal, 2)
     }
+  })
+
+  it('本金递推链完整：每行年末本金成为下一行年初本金', () => {
+    const rows = simulate({ ...DEFAULT_PARAMS })
+    for (let i = 1; i < rows.length; i++) {
+      expect(rows[i].startPrincipal).toBe(rows[i - 1].endPrincipal)
+    }
+  })
+
+  it('换车模板金额精确到分（不在输入框里露出 11 位小数）', () => {
+    const car = DEFAULT_PARAMS.expenses.find((e) => e.name === '换车')!
+    expect(car.amount).toBe(82_846.66)
+    // 与精确值相差不到 1 分
+    expect(Math.abs(car.amount - OLD_CAR_PRICE * 1.01 ** 10 * 0.75)).toBeLessThan(0.01)
   })
 
   it('换车模板在触发年的净支出等于旧口径「车价 × 1.01^n × 75%」', () => {
@@ -437,8 +455,8 @@ describe('回归：默认参数与旧专用模型逐年等价', () => {
     expect(car.period).toBe('year')
     expect(car.interval).toBe(10)
     // 首次换车在 40 岁：车价已在模板里按 1.01^10 预先折算过
-    expect(perOccurrenceAmount(car, 40)).toBeCloseTo(OLD_CAR_PRICE * 1.01 ** 10 * 0.75, 6)
-    expect(perOccurrenceAmount(car, 90)).toBeCloseTo(OLD_CAR_PRICE * 1.01 ** 60 * 0.75, 6)
+    expect(perOccurrenceAmount(car, 40)).toBeCloseTo(OLD_CAR_PRICE * 1.01 ** 10 * 0.75, 2)
+    expect(perOccurrenceAmount(car, 90)).toBeCloseTo(OLD_CAR_PRICE * 1.01 ** 60 * 0.75, 2)
     expect(occurrenceYears(car, 30, 90)).toEqual([40, 50, 60, 70, 80, 90])
   })
 

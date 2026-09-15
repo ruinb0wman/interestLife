@@ -315,16 +315,18 @@ export function createItem(presetKey: string, startAge: number, endAge: number):
       // 与旧模型等价：车价从「全局开始年龄」起按 1% 复利，首次换车在 lo + 10。
       // 单次金额是「首次换车那年」的净支出，之后每 10 年再按 growth 复利一次：
       //   amount = 车价 × (1 − 残值率) × (1 + 涨幅)^(首次换车年龄 − 全局开始年龄)
-      // 于是触发年的净支出与旧的 initialCarPrice × (1 + g)^(age − startAge) × 75% 逐年一致。
+      // 于是触发年的净支出与旧的 initialCarPrice × (1 + g)^(age − startAge) × 75% 逐年一致
+      // （差一位小数以内：金额按「分」四舍五入，否则输入框里会显示 82846.65940584034 这种值）。
       const carGrowth = 0.01
       const firstCarAge = at(lo + 10)
+      const netCost =
+        DEFAULT_CAR_PRICE *
+        (1 - CAR_RESIDUAL_RATIO) *
+        Math.pow(1 + carGrowth, firstCarAge - lo)
       return {
         ...base,
         name: '换车',
-        amount:
-          DEFAULT_CAR_PRICE *
-          (1 - CAR_RESIDUAL_RATIO) *
-          Math.pow(1 + carGrowth, firstCarAge - lo),
+        amount: Math.round(netCost * 100) / 100,
         period: 'year',
         interval: 10,
         growth: carGrowth,
