@@ -186,9 +186,21 @@ describe('analyze', () => {
     expect(a.survives).toBe(true)
   })
 
-  // 回归：survives 曾用 `finalBalance > 0` 判定，导致「中途破产、后来靠高工资翻身」
-  // 的路径被 Banner 判为「可以躺平」，与蒙特卡洛的「全程未为负」口径互相矛盾。
-  it('中途破产但最终转正 → survives = false', () => {
+  it('未耗尽时跑到目标年龄，节点均可取到', () => {
+    const params = { ...DEFAULT_PARAMS }
+    const rows = simulate(params)
+    const a = analyze(rows, params)
+
+    expect(rows).toHaveLength(params.targetAge - params.startAge + 1)
+    expect(a.targetAge).toBe(params.targetAge)
+    expect(a.simulatedThroughAge).toBe(params.targetAge)
+    expect(a.afterFirstCar).not.toBeNull()
+    expect(a.afterSalaryStop).not.toBeNull()
+  })
+
+  // 回归：旧实现不截断，负本金继续按组合收益率「复利」，
+  // 33 岁就已资不抵债的路径会被推到 90 岁并显示成 +2.5 亿。
+  it('资不抵债即截断，缺口保留在最后一行', () => {
     const params: SimParams = {
       ...DEFAULT_PARAMS,
       monthlySalary: 20_000,
@@ -197,18 +209,42 @@ describe('analyze', () => {
       oneOffExpenses: [{ age: 33, amount: 2_000_000 }],
       annualReturn: 0.08,
     }
+    const rows = simulate(params)
+    const a = analyze(rows, params)
+
+    expect(rows.map((r) => r.age)).toEqual([30, 31, 32, 33])
+    expect(rows[rows.length - 1].endPrincipal).toBeLessThan(0)
+    expect(a.firstNegativeAge).toBe(33)
+    expect(a.simulatedThroughAge).toBe(33)
+    expect(a.targetAge).toBe(90) // 计划终点不受截断影响
+    expect(a.survives).toBe(false)
+    expect(a.finalBalance).toBe(rows[rows.length - 1].endPrincipal)
+    // 缺口只有当年的量级，而不是雪球式的千万负债
+    expect(Math.abs(a.finalBalance)).toBeLessThan(1_000_000)
+  })
+
+  it('截断后未被模拟到的节点返回 null', () => {
+    const params: SimParams = { ...DEFAULT_PARAMS, enableSalary: false, monthlyLiving: 9_000 }
     const a = analyze(simulate(params), params)
 
-    expect(a.minBalance).toBeLessThan(0)
-    expect(a.finalBalance).toBeGreaterThan(0)
-    expect(a.firstNegativeAge).toBe(33)
-    expect(a.survives).toBe(false)
+    expect(a.firstNegativeAge).toBe(35)
+    expect(a.simulatedThroughAge).toBe(35)
+    expect(a.firstCarAge).toBe(40)
+    expect(a.afterFirstCar).toBeNull()
+    expect(a.afterSalaryStop).toBeNull()
   })
 })
 
 describe('monteCarlo', () => {
   it('参数非法时返回全 0 且不抛异常', () => {
-    const zero = { successRate: 0, p5Final: 0, p50Final: 0, p95Final: 0, worstFinal: 0 }
+    const zero = {
+      successRate: 0,
+      p5Final: 0,
+      p50Final: 0,
+      p95Final: 0,
+      worstFinal: 0,
+      p50DepletedAge: null,
+    }
     expect(monteCarlo(DEFAULT_PARAMS, 0, 0.02, 0.01)).toEqual(zero)
     expect(monteCarlo(baseline({ startAge: 60, targetAge: 60 }), 100, 0.02, 0.01)).toEqual(zero)
   })
@@ -234,6 +270,25 @@ describe('monteCarlo', () => {
     expect(mc.worstFinal).toBeLessThanOrEqual(mc.p5Final)
     expect(mc.successRate).toBeGreaterThanOrEqual(0)
     expect(mc.successRate).toBeLessThanOrEqual(1)
+  })
+
+  // 回归：MC 旧实现不截断，破产样本的「最终资产」是雪球式负债，分位数严重失真
+  it('破产样本按耗尽当年截断，并给出破产中位年龄', () => {
+    const params: SimParams = { ...DEFAULT_PARAMS, monthlyLiving: 6_000 }
+    const mc = monteCarlo(params, 300, 0.12, 0.02)
+
+    expect(mc.successRate).toBeLessThan(1)
+    expect(mc.p50DepletedAge).not.toBeNull()
+    expect(mc.p50DepletedAge!).toBeGreaterThan(params.startAge)
+    expect(mc.p50DepletedAge!).toBeLessThanOrEqual(params.targetAge)
+    // 缺口只可能是耗尽当年的量级（远小于生活费 × 60 年）
+    expect(Math.abs(mc.worstFinal)).toBeLessThan(mc.p50DepletedAge! > 0 ? 5_000_000 : 0)
+  })
+
+  it('不破产时 p50DepletedAge 为 null', () => {
+    const mc = monteCarlo({ ...DEFAULT_PARAMS, monthlyLiving: 1_000 }, 200, 0.02, 0.01)
+    expect(mc.successRate).toBe(1)
+    expect(mc.p50DepletedAge).toBeNull()
   })
 
   it('收益率为负时结果差于正收益率', () => {
@@ -268,8 +323,8 @@ describe('verdict：三档结论', () => {
     expect(verdict(neutral, pessimistic)).toBe('risky')
   })
 
-  // 回归：只靠 `finalBalance > 0` 判定的旧版本会把这种路径误判为 safe / risky
-  it('中性情景中途破产但最终转正 → bankrupt', () => {
+  // 资不抵债即截断，因此「中性情景会破产」只有一种形态：目标年龄前耗尽资产
+  it('中性情景前耗尽资产 → bankrupt', () => {
     const neutral = analysisFor({
       monthlySalary: 20_000,
       salaryGrowth: 0.05,
@@ -278,7 +333,7 @@ describe('verdict：三档结论', () => {
       annualReturn: 0.08,
     })
     expect(neutral.firstNegativeAge).toBe(33)
-    expect(neutral.finalBalance).toBeGreaterThan(0)
+    expect(neutral.simulatedThroughAge).toBe(33)
     expect(verdict(neutral, neutral)).toBe('bankrupt')
   })
 

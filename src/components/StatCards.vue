@@ -5,57 +5,73 @@ import { formatPercent, formatWan, formatYuan } from '../format'
 
 const props = defineProps<{
   analysis: Analysis
-  pessimisticBalance: number
+  pessimisticAnalysis: Analysis
   pessimisticReturn: number
 }>()
 
+interface StatCard {
+  label: string
+  /** null = 该年份未被模拟到（资产已提前耗尽） */
+  amount: number | null
+  hint: string
+}
+
+function balanceCard(name: string, a: Analysis, hint: string): StatCard {
+  return a.survives
+    ? { label: `${a.targetAge} 岁总资产（${name}）`, amount: a.finalBalance, hint }
+    : { label: `${a.firstNegativeAge} 岁资产耗尽（${name}）`, amount: a.finalBalance, hint }
+}
+
+function nodeCard(label: string, amount: number | null, hint: string): StatCard {
+  return { label, amount, hint }
+}
+
 // 必须用 computed：label / hint 依赖 props，写成普通常量只会在 setup 时求值一次，
 // 之后参数变化不会更新（例如「停薪后」卡片的年龄与最低本金年龄会一直是旧值）。
-const cards = computed(() => {
+const cards = computed<StatCard[]>(() => {
   const a = props.analysis
+  const p = props.pessimisticAnalysis
   const span = a.targetAge - a.startAge
+
   return [
-    {
-      label: `${a.targetAge} 岁总资产（中性）`,
-      amount: a.finalBalance,
-      hint: '模拟结束时的全部身家',
-    },
-    {
-      label: `悲观情景总资产（${formatPercent(props.pessimisticReturn)}）`,
-      amount: props.pessimisticBalance,
-      hint: '最坏情景下的剩余身家',
-    },
-    {
-      label: `${a.firstCarAge} 岁（第一次换车后）`,
-      amount: a.afterFirstCar,
-      hint: '首次换车节点',
-    },
-    {
-      label: `${a.salaryStopAge + 1} 岁（停薪后）`,
-      amount: a.afterSalaryStop,
-      hint: '工资停发后的节点',
-    },
-    {
-      label: '最低本金',
-      amount: a.minBalance,
-      hint: `${a.minBalanceAge} 岁时为 ${span} 年内最低点`,
-    },
+    balanceCard('中性', a, a.survives ? '模拟结束时的全部身家' : '耗尽当年的资金缺口'),
+    balanceCard(
+      `悲观 ${formatPercent(props.pessimisticReturn)}`,
+      p,
+      p.survives ? '最坏情景下的剩余身家' : '耗尽当年的资金缺口',
+    ),
+    nodeCard(
+      `${a.firstCarAge} 岁（第一次换车后）`,
+      a.afterFirstCar,
+      a.afterFirstCar === null ? `未模拟到，${a.simulatedThroughAge} 岁已耗尽` : '首次换车节点',
+    ),
+    nodeCard(
+      `${a.salaryStopAge + 1} 岁（停薪后）`,
+      a.afterSalaryStop,
+      a.afterSalaryStop === null ? `未模拟到，${a.simulatedThroughAge} 岁已耗尽` : '工资停发后的节点',
+    ),
+    nodeCard(
+      '最低本金',
+      a.minBalance,
+      `${a.minBalanceAge} 岁时为 ${span} 年内最低点`,
+    ),
   ]
 })
+
+function toneClass(card: StatCard): string {
+  if (card.amount === null) return 'muted'
+  return card.amount >= 0 ? 'positive' : 'negative'
+}
 </script>
 
 <template>
   <div class="stats">
-    <div
-      v-for="c in cards"
-      :key="c.label"
-      class="stat-card"
-      :class="c.amount >= 0 ? 'positive' : 'negative'"
-    >
+    <div v-for="c in cards" :key="c.label" class="stat-card" :class="toneClass(c)">
       <div class="stat-label">{{ c.label }}</div>
-      <div class="stat-value">{{ formatWan(c.amount) }}</div>
+      <div class="stat-value">{{ c.amount === null ? '—' : formatWan(c.amount) }}</div>
       <div class="stat-sub">
-        {{ formatYuan(c.amount) }}
+        <template v-if="c.amount === null">未模拟到（已提前耗尽）</template>
+        <template v-else>{{ formatYuan(c.amount) }}</template>
         <span class="stat-hint">· {{ c.hint }}</span>
       </div>
     </div>
@@ -81,6 +97,9 @@ const cards = computed(() => {
 .stat-card.negative {
   border-left: 4px solid var(--red);
 }
+.stat-card.muted {
+  border-left: 4px solid var(--text-3);
+}
 .stat-label {
   font-size: 13px;
   color: var(--text-2);
@@ -96,6 +115,9 @@ const cards = computed(() => {
 }
 .negative .stat-value {
   color: var(--red);
+}
+.muted .stat-value {
+  color: var(--text-3);
 }
 .stat-sub {
   font-size: 12px;

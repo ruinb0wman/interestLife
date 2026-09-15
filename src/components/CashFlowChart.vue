@@ -14,16 +14,32 @@ const el = ref<HTMLDivElement | null>(null)
 let chart: echarts.ECharts | null = null
 
 function buildOption(rows: YearRow[]): echarts.EChartsOption {
-  const ages = rows.map((r) => r.age)
-  const main = rows.map((r) => r.endPrincipal)
-  const optimistic = (props.optimisticRows ?? rows).map((r) => r.endPrincipal)
-  const pessimistic = (props.pessimisticRows ?? rows).map((r) => r.endPrincipal)
-  const negative = pessimistic.map((v) => (v < 0 ? v : null))
-  const salaries = rows.map((r) => r.salary)
-  const extraIncomes = rows.map((r) => r.extraIncome)
-  const livings = rows.map((r) => r.living)
-  const medicals = rows.map((r) => r.medical)
-  const oneOffs = rows.map((r) => r.oneOff)
+  const optimisticRows = props.optimisticRows ?? rows
+  const pessimisticRows = props.pessimisticRows ?? rows
+  const startAge = rows[0]?.age ?? 0
+
+  // 破产截断后三个情景的年份长度不再相同：统一按最长情景铺时间轴，
+  // 较短的情景用 null 补齐，这样每条曲线在各自耗尽的那一年自然断开。
+  const length = Math.max(rows.length, optimisticRows.length, pessimisticRows.length)
+  const ages = Array.from({ length }, (_, i) => startAge + i)
+  const pick = (list: YearRow[], key: keyof YearRow) =>
+    Array.from({ length }, (_, i) => (list[i] ? (list[i][key] as number) : null))
+
+  const main = pick(rows, 'endPrincipal')
+  const optimistic = pick(optimisticRows, 'endPrincipal')
+  const pessimistic = pick(pessimisticRows, 'endPrincipal')
+  const salaries = pick(rows, 'salary')
+  const extraIncomes = pick(rows, 'extraIncome')
+  const livings = pick(rows, 'living')
+  const medicals = pick(rows, 'medical')
+  const oneOffs = pick(rows, 'oneOff')
+
+  // 耗尽点：每个情景最后一个被模拟到的年份（年末本金为负即已耗尽）
+  const depletedPoints: Array<[number, number]> = []
+  for (const list of [rows, optimisticRows, pessimisticRows]) {
+    const last = list[list.length - 1]
+    if (last && last.endPrincipal < 0) depletedPoints.push([last.age, 0])
+  }
 
   return {
     color: ['#a8b1ff', '#3dd68c', '#f9b44e'],
@@ -36,16 +52,14 @@ function buildOption(rows: YearRow[]): echarts.EChartsOption {
       formatter(params: unknown) {
         const list = params as Array<{
           seriesName: string
-          value: number | null
+          value: number | number[] | null
           axisValue: string
         }>
         const lines = list
-          .filter((p) => p.value !== null && p.value !== undefined && p.value !== 0)
+          .filter((p) => typeof p.value === 'number' && p.value !== 0)
           .map((p) => `${p.seriesName}：${formatWanShort(p.value as number)} 元`)
-        if (lines.length === 0) {
-          return `年龄 ${list[0]?.axisValue} 岁`
-        }
-        return `年龄 ${list[0]?.axisValue} 岁<br/>${lines.join('<br/>')}`
+        const head = `年龄 ${list[0]?.axisValue} 岁`
+        return lines.length === 0 ? head : `${head}<br/>${lines.join('<br/>')}`
       },
     },
     legend: {
@@ -56,7 +70,7 @@ function buildOption(rows: YearRow[]): echarts.EChartsOption {
         '本金·乐观',
         '本金·中性',
         '本金·悲观',
-        '破产区间',
+        '耗尽点',
         '年度工资',
         '年度生活费',
         '年度医疗',
@@ -126,13 +140,13 @@ function buildOption(rows: YearRow[]): echarts.EChartsOption {
         lineStyle: { width: 1.5, type: 'dashed', color: '#f9b44e' },
       },
       {
-        name: '破产区间',
-        type: 'line',
-        data: negative,
-        symbol: 'none',
-        lineStyle: { width: 2, color: '#f66f81' },
-        areaStyle: { color: 'rgba(246, 111, 129, 0.30)' },
+        name: '耗尽点',
+        type: 'scatter',
+        data: depletedPoints,
+        symbolSize: 9,
+        itemStyle: { color: '#f66f81', borderColor: '#1b1b1f', borderWidth: 2 },
         yAxisIndex: 0,
+        z: 5,
       },
       {
         name: '年度工资',

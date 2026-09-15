@@ -56,12 +56,12 @@ const conclusion = computed(() => verdict(analysis.value, pessimisticAnalysis.va
       title="中性可躺平，但悲观情景存在失效风险"
     >
       <template #default>
-        悲观收益率（{{ formatPercent(params.pessimisticReturn) }}）下本金在
+        悲观收益率（{{ formatPercent(params.pessimisticReturn) }}）下
         <template v-if="pessimisticAnalysis.firstNegativeAge >= 0">
-          <b>{{ pessimisticAnalysis.firstNegativeAge }} 岁</b>首现负数
+          资产在 <b>{{ pessimisticAnalysis.firstNegativeAge }} 岁</b>耗尽，
+          缺口 {{ formatWan(pessimisticAnalysis.finalBalance) }}（此后不再推演）；
         </template>
-        <template v-else>目标年龄时耗尽</template>
-        （最低 {{ formatYuan(pessimisticAnalysis.minBalance) }}）。
+        <template v-else>目标年龄时资产正好耗尽；</template>
         中性情景（{{ formatPercent(params.annualReturn) }}）最终仍有
         {{ formatWan(analysis.finalBalance) }}，全程最低点 {{ formatWan(analysis.minBalance) }}
         （{{ analysis.minBalanceAge }} 岁）。
@@ -77,12 +77,13 @@ const conclusion = computed(() => verdict(analysis.value, pessimisticAnalysis.va
       title="会破产，无法躺平到目标年龄"
     >
       <template #default>
-        本金在
+        资产在
         <template v-if="analysis.firstNegativeAge >= 0">
-          <b>{{ analysis.firstNegativeAge }} 岁</b>首现负数
+          <b>{{ analysis.firstNegativeAge }} 岁</b>耗尽
         </template>
         <template v-else>目标年龄时耗尽</template>
-        ，全程最低点为 {{ analysis.minBalanceAge }} 岁的 {{ formatYuan(analysis.minBalance) }}。
+        ，缺口 {{ formatWan(analysis.finalBalance) }}（此后不再推演），
+        全程最低点为 {{ analysis.minBalanceAge }} 岁的 {{ formatYuan(analysis.minBalance) }}。
         试试提高本金 / 收益率，或压低生活费涨幅、停用换车/医疗支出。
       </template>
     </el-alert>
@@ -99,7 +100,7 @@ const conclusion = computed(() => verdict(analysis.value, pessimisticAnalysis.va
 
     <StatCards
       :analysis="analysis"
-      :pessimistic-balance="pessimisticAnalysis.finalBalance"
+      :pessimistic-analysis="pessimisticAnalysis"
       :pessimistic-return="params.pessimisticReturn"
     />
 

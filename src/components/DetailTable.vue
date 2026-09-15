@@ -16,6 +16,12 @@ const carYearsText = computed(() =>
     ' / ',
   ),
 )
+
+/** 资产耗尽的年龄；全程未耗尽则为 null（最后一行年末本金为负即已耗尽） */
+const depletedAt = computed(() => {
+  const last = props.rows[props.rows.length - 1]
+  return last && last.endPrincipal < 0 ? last.age : null
+})
 </script>
 
 <template>
@@ -44,6 +50,10 @@ const carYearsText = computed(() =>
             </template>
           </el-table-column>
         </el-table>
+        <p v-if="depletedAt !== null" class="note warn">
+          资产在 {{ depletedAt }} 岁耗尽，模拟在此截断（共 {{ rows.length }} 年），表中最后一行为耗尽当年；
+          后续年份不再推演负债。
+        </p>
         <p class="note">
           换车年份：{{ carYearsText }} 岁 · 工资发至 {{ params.salaryStopAge }} 岁，{{
             params.salaryStopAge + 1
@@ -74,5 +84,8 @@ const carYearsText = computed(() =>
   font-size: 12px;
   color: var(--text-3);
   margin: 8px 0 12px;
+}
+.note.warn {
+  color: var(--warning);
 }
 </style>

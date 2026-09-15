@@ -36,6 +36,7 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
     <p class="card-hint">
       每年收益率 ~ N(中性收益率, 收益波动率)、生活费涨幅 ~ N(涨幅, 通胀波动率) 随机游走，
       统计“全程本金从未为负”的成功率与最终资产分布。
+      与主图一致，某次模拟一旦资不抵债就在当年截断，缺口计入最终资产，不再推演负债雪球。
     </p>
     <div class="mc-grid">
       <div class="param-item">
@@ -79,10 +80,17 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
           <span>最差情景</span>
           <b :class="{ neg: result.worstFinal < 0 }">{{ formatWan(result.worstFinal) }}</b>
         </div>
+        <div v-if="result.p50DepletedAge !== null" class="bar">
+          <span>破产中位年龄</span>
+          <b class="neg">{{ result.p50DepletedAge }} 岁</b>
+        </div>
       </div>
       <p class="mc-note">
         成功率为 {{ formatPercent(result.successRate) }}；
         最终资产最低 {{ formatYuan(result.worstFinal) }}、中位 {{ formatYuan(result.p50Final) }}。
+        <template v-if="result.p50DepletedAge !== null">
+          破产的模拟中，有一半在 {{ result.p50DepletedAge }} 岁前就已耗尽资产。
+        </template>
       </p>
     </div>
   </div>

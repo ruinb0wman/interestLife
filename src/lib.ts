@@ -14,6 +14,10 @@
 //
 // 复利、残值抵扣、换车年顺序均体现在下方 simulate() 中。
 // monteCarlo() 为压力测试：收益率与生活费涨幅逐年随机游走。
+//
+// 截断规则：某一年年末本金首次为负（资不抵债）即终止模拟，当年缺口保留在结果里。
+// 不再推演后续年份——现实中无法以自己组合的收益率无限透支，
+// 否则负本金会跟着「复利」滚成雪球，把悲观情景的破产金额严重夸大。
 
 export const DEFAULT_START_AGE = 30
 export const DEFAULT_TARGET_AGE = 90
@@ -153,8 +157,10 @@ export interface YearRow {
 export interface Analysis {
   /** 初始年龄 */
   startAge: number
-  /** 目标年龄 */
+  /** 用户设定的计划终点年龄（与实际模拟终点无关） */
   targetAge: number
+  /** 实际模拟到的最后一年：正常 = 目标年龄；资不抵债时 = 耗尽那年 */
+  simulatedThroughAge: number
   /** 工资结束年龄（最后发薪年） */
   salaryStopAge: number
   /** 第一次换车年龄 = 初始年龄 + 买车周期 */
@@ -165,21 +171,24 @@ export interface Analysis {
   minBalance: number
   /** 出现最低本金的年龄 */
   minBalanceAge: number
-  /** 本金首现负数的年龄；若从未为负则返回 -1 */
+  /** 本金首现负数的年龄（即资产耗尽年龄）；若从未为负则返回 -1 */
   firstNegativeAge: number
-  /** 目标年龄年末本金，即全程总资产 */
+  /**
+   * 模拟终点的年末本金：
+   * 未耗尽时 = 目标年龄总资产；耗尽时 = 耗尽当年的缺口（负数）
+   */
   finalBalance: number
-  /** 第一次换车后的年末本金 */
-  afterFirstCar: number
-  /** 停薪后（工资结束年龄 + 1）的年末本金 */
-  afterSalaryStop: number
+  /** 第一次换车后的年末本金；该年未被模拟到（已提前耗尽）则为 null */
+  afterFirstCar: number | null
+  /** 停薪后（工资结束年龄 + 1）的年末本金；该年未被模拟到则为 null */
+  afterSalaryStop: number | null
 }
 
 /** 蒙特卡洛压力测试结果 */
 export interface McResult {
   /** 全程本金从未为负的模拟占比（0~1） */
   successRate: number
-  /** 最终资产的 5% 分位 */
+  /** 最终资产的 5% 分位（破产样本按耗尽当年缺口计入） */
   p5Final: number
   /** 最终资产中位数（50% 分位） */
   p50Final: number
@@ -187,6 +196,8 @@ export interface McResult {
   p95Final: number
   /** 所有模拟中最差的最终资产 */
   worstFinal: number
+  /** 破产样本「资产耗尽年龄」的中位数；无破产样本时为 null */
+  p50DepletedAge: number | null
 }
 
 /** 换车年份列表：初始年龄 + 周期，每周期一次，直到目标年龄 */
@@ -280,6 +291,10 @@ export function simulateScenario(params: SimParams, annualReturn: number): YearR
     const livingFactor = Math.pow(1 + params.livingGrowth, age - params.startAge)
     const row = computeYear(params, age, principal, annualReturn, livingFactor, cars)
     rows.push(row)
+
+    // 资不抵债即截断：记录当年缺口后终止，不再推演负债雪球
+    if (row.endPrincipal < 0) break
+
     principal = row.endPrincipal
   }
 
@@ -289,7 +304,7 @@ export function simulateScenario(params: SimParams, annualReturn: number): YearR
 /** 从模拟结果提取关键节点 + 破产分析 */
 export function analyze(rows: YearRow[], params: SimParams): Analysis {
   const startAge = rows[0]?.age ?? params.startAge
-  const targetAge = rows.length > 0 ? rows[rows.length - 1].age : params.targetAge
+  const simulatedThroughAge = rows.length > 0 ? rows[rows.length - 1].age : startAge
   const finalBalance = rows.length > 0 ? rows[rows.length - 1].endPrincipal : 0
 
   const byAge = new Map<number, number>()
@@ -311,12 +326,15 @@ export function analyze(rows: YearRow[], params: SimParams): Analysis {
   }
 
   const firstCarAge = params.startAge + params.carReplaceInterval
-  const afterFirstCar = byAge.get(firstCarAge) ?? finalBalance
-  const afterSalaryStop = byAge.get(params.salaryStopAge + 1) ?? finalBalance
+  // 提前耗尽时这些年份根本没被模拟到，返回 null 而不是拿终值顶替（否则卡片会
+  // 张冠李戴地显示「91 岁停薪后」却给出 90 岁的余额）
+  const afterFirstCar = byAge.get(firstCarAge) ?? null
+  const afterSalaryStop = byAge.get(params.salaryStopAge + 1) ?? null
 
   return {
     startAge,
-    targetAge,
+    targetAge: params.targetAge,
+    simulatedThroughAge,
     salaryStopAge: params.salaryStopAge,
     firstCarAge,
     survives: firstNegativeAge === -1 && finalBalance > 0,
@@ -367,6 +385,9 @@ function percentile(sorted: number[], p: number): number {
  * 蒙特卡洛压力测试：每年收益率 ~ N(annualReturn, returnVolatility)、
  * 生活费涨幅 ~ N(livingGrowth, inflationVolatility) 随机游走，
  * 共 iterations 次模拟，统计全程本金从未为负的成功率与最终资产分位。
+ *
+ * 与 simulateScenario 一致，资不抵债即截断该次模拟，以耗尽当年的缺口计入最终资产，
+ * 并记录耗尽年龄。
  */
 export function monteCarlo(
   params: SimParams,
@@ -374,12 +395,19 @@ export function monteCarlo(
   returnVolatility: number,
   inflationVolatility: number,
 ): McResult {
-  if (params.startAge >= params.targetAge || iterations <= 0) {
-    return { successRate: 0, p5Final: 0, p50Final: 0, p95Final: 0, worstFinal: 0 }
+  const empty: McResult = {
+    successRate: 0,
+    p5Final: 0,
+    p50Final: 0,
+    p95Final: 0,
+    worstFinal: 0,
+    p50DepletedAge: null,
   }
+  if (params.startAge >= params.targetAge || iterations <= 0) return empty
 
   const cars = carYears(params.startAge, params.targetAge, params.carReplaceInterval)
   const finals: number[] = []
+  const depletedAges: number[] = []
   let successes = 0
 
   for (let iter = 0; iter < iterations; iter++) {
@@ -390,7 +418,14 @@ export function monteCarlo(
     for (let age = params.startAge; age <= params.targetAge; age++) {
       const ret = clamp(params.annualReturn + returnVolatility * gaussian(), -0.3, 0.6)
       const row = computeYear(params, age, principal, ret, livingFactor, cars)
-      if (row.endPrincipal < 0) ok = false
+
+      if (row.endPrincipal < 0) {
+        ok = false
+        principal = row.endPrincipal
+        depletedAges.push(age)
+        break
+      }
+
       principal = row.endPrincipal
 
       // 通胀在「下一年」生效：起始年的生活费系数必须是 1，否则 MC 首年就多涨一轮，
@@ -405,11 +440,13 @@ export function monteCarlo(
   }
 
   finals.sort((a, b) => a - b)
+  depletedAges.sort((a, b) => a - b)
   return {
     successRate: successes / iterations,
     p5Final: percentile(finals, 0.05),
     p50Final: percentile(finals, 0.5),
     p95Final: percentile(finals, 0.95),
     worstFinal: finals[0] ?? 0,
+    p50DepletedAge: depletedAges.length > 0 ? percentile(depletedAges, 0.5) : null,
   }
 }

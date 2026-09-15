@@ -17,7 +17,7 @@ describe('StatCards', () => {
     const wrapper = mount(StatCards, {
       props: {
         analysis: analysisOf({ salaryStopAge: 50 }),
-        pessimisticBalance: 1,
+        pessimisticAnalysis: analysisOf(),
         pessimisticReturn: 0.04,
       },
     })
@@ -33,7 +33,7 @@ describe('StatCards', () => {
     const wrapper = mount(StatCards, {
       props: {
         analysis: analysisOf({ targetAge: 90 }),
-        pessimisticBalance: 1,
+        pessimisticAnalysis: analysisOf(),
         pessimisticReturn: 0.04,
       },
     })
@@ -42,6 +42,27 @@ describe('StatCards', () => {
     await wrapper.setProps({ analysis: analysisOf({ targetAge: 100 }) })
     expect(wrapper.text()).toContain('70 年内最低点')
     expect(wrapper.text()).not.toContain('60 年内最低点')
+  })
+
+  it('资产耗尽时标题改为「资产耗尽」，未模拟到的节点显示 —', () => {
+    const wrapper = mount(StatCards, {
+      props: {
+        analysis: analysisOf({
+          monthlySalary: 20_000,
+          salaryGrowth: 0.05,
+          monthlyLiving: 1_000,
+          oneOffExpenses: [{ age: 33, amount: 2_000_000 }],
+          annualReturn: 0.08,
+        }),
+        pessimisticAnalysis: analysisOf(),
+        pessimisticReturn: 0.04,
+      },
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('33 岁资产耗尽（中性）')
+    expect(text).toContain('未模拟到（已提前耗尽）')
+    expect(text).not.toContain('90 岁总资产（中性）')
   })
 })
 
