@@ -1,0 +1,194 @@
+// @vitest-environment happy-dom
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_MC_CONFIG, DEFAULT_PARAMS, cloneParams } from './lib'
+import { STATE_VERSION } from './persist'
+import {
+  MAX_SNAPSHOTS,
+  SNAPSHOT_KEY,
+  addSnapshot,
+  createSnapshot,
+  defaultSnapshotName,
+  formatSavedAt,
+  listSnapshots,
+  removeSnapshot,
+  renameSnapshot,
+  uniqueSnapshotName,
+  writeSnapshots,
+  type Snapshot,
+} from './snapshots'
+
+function snap(name: string, overrides: Partial<Snapshot> = {}): Snapshot {
+  return {
+    ...createSnapshot(DEFAULT_PARAMS, DEFAULT_MC_CONFIG, name, new Date('2026-09-15T13:40:00Z')),
+    ...overrides,
+  }
+}
+
+beforeEach(() => {
+  localStorage.clear()
+})
+
+describe('快照存储 key', () => {
+  // 参数结构不兼容时（STATE_VERSION 变更）整批作废，与 persist.ts 的策略一致
+  it('key 带 STATE_VERSION，版本一变就换 key', () => {
+    expect(SNAPSHOT_KEY).toBe(`interestlife.snapshots.v${STATE_VERSION}`)
+  })
+})
+
+describe('createSnapshot', () => {
+  it('深拷贝参数，之后改动原对象不影响快照', () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    const created = createSnapshot(params, DEFAULT_MC_CONFIG, 'A')
+
+    params.initialPrincipal = 999
+    params.incomes[0].amount = 12345
+
+    expect(created.params.initialPrincipal).toBe(DEFAULT_PARAMS.initialPrincipal)
+    expect(created.params.incomes[0].amount).toBe(DEFAULT_PARAMS.incomes[0].amount)
+    expect(created.name).toBe('A')
+  })
+
+  it('名称为空时退回默认名（月份-日期 时:分 方案）', () => {
+    const created = createSnapshot(DEFAULT_PARAMS, DEFAULT_MC_CONFIG, '   ')
+    expect(created.name).toBe(defaultSnapshotName())
+    expect(created.name).toMatch(/\d{2}-\d{2} \d{2}:\d{2} 方案/)
+  })
+})
+
+describe('listSnapshots / writeSnapshots', () => {
+  it('往返：写入后读回同样的参数与设置', () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    params.initialPrincipal = 1_234_567
+    params.annualReturn = 0.065
+    const created = createSnapshot(params, { ...DEFAULT_MC_CONFIG, iterations: 2500 }, '往返')
+
+    expect(writeSnapshots([created])).toBe(true)
+    const [back] = listSnapshots()
+
+    expect(back.name).toBe('往返')
+    expect(back.params.initialPrincipal).toBe(1_234_567)
+    expect(back.params.annualReturn).toBe(0.065)
+    expect(back.params.incomes).toEqual(params.incomes)
+    expect(back.mc.iterations).toBe(2500)
+  })
+
+  it('内容损坏（非法 JSON / 不是数组）时返回空列表而不是抛异常', () => {
+    localStorage.setItem(SNAPSHOT_KEY, '{ this is not json')
+    expect(listSnapshots()).toEqual([])
+
+    localStorage.setItem(SNAPSHOT_KEY, '{"a":1}')
+    expect(listSnapshots()).toEqual([])
+  })
+
+  it('单条快照字段越界/缺失时被规整，不牵连其它条', () => {
+    localStorage.setItem(
+      SNAPSHOT_KEY,
+      JSON.stringify([
+        { name: '  ' },
+        { id: 'x', savedAt: '这不是时间', params: { startAge: -50, endAge: 1e9 } },
+      ]),
+    )
+    const items = listSnapshots()
+
+    expect(items).toHaveLength(2)
+    // 缺 params → 退回默认参数；名字空白 → 序号兜底
+    expect(items[0].params.initialPrincipal).toBe(DEFAULT_PARAMS.initialPrincipal)
+    expect(items[0].name).toBe('快照 1')
+    expect(items[0].id).toBe('snap-0')
+    // 非法时间戳不能变成 NaN 显示在列表里
+    expect(Number.isNaN(Date.parse(items[1].savedAt))).toBe(false)
+    expect(items[1].name).toBe('快照 2')
+    // 荒谬年龄被夹紧，而不是让 simulate 拿到 1e9
+    expect(items[1].params.endAge).toBeLessThanOrEqual(200)
+  })
+
+  it('读回时截断到上限条数', () => {
+    const many = Array.from({ length: MAX_SNAPSHOTS + 10 }, (_, i) => snap(`S${i}`))
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(many))
+    expect(listSnapshots()).toHaveLength(MAX_SNAPSHOTS)
+  })
+
+  it('localStorage 取用即抛（沙箱 iframe / 隐私模式）时降级为空列表 + 写入失败', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('SecurityError')
+      },
+    })
+
+    try {
+      expect(listSnapshots()).toEqual([])
+      expect(writeSnapshots([snap('A')])).toBe(false)
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor)
+    }
+  })
+
+  it('配额满（setItem 抛异常）时写入返回 false，调用方才能提示用户', () => {
+    const spy = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError')
+    })
+
+    expect(writeSnapshots([snap('A')])).toBe(false)
+    spy.mockRestore()
+  })
+})
+
+describe('addSnapshot / removeSnapshot / renameSnapshot', () => {
+  it('新快照插到最前，超过上限时丢弃最旧的', () => {
+    let items: Snapshot[] = []
+    for (let i = 0; i < MAX_SNAPSHOTS + 3; i++) items = addSnapshot(items, snap(`S${i}`))
+
+    expect(items).toHaveLength(MAX_SNAPSHOTS)
+    expect(items[0].name).toBe(`S${MAX_SNAPSHOTS + 2}`)
+    expect(items.some((item) => item.name === 'S0')).toBe(false)
+  })
+
+  it('删除不存在的 id 时原样返回同一引用（调用方据此跳过无谓写入）', () => {
+    const items = [snap('A'), snap('B')]
+    expect(removeSnapshot(items, '不存在')).toBe(items)
+
+    const next = removeSnapshot(items, items[0].id)
+    expect(next).not.toBe(items)
+    expect(next.map((item) => item.name)).toEqual(['B'])
+  })
+
+  it('重命名：id 不存在 / 名字没变 / 空名字都是 no-op，正常情况只改那一条', () => {
+    const items = [snap('A'), snap('B')]
+    expect(renameSnapshot(items, '不存在', 'X')).toBe(items)
+    expect(renameSnapshot(items, items[0].id, 'A')).toBe(items)
+    expect(renameSnapshot(items, items[0].id, '   ')).toBe(items)
+
+    const next = renameSnapshot(items, items[0].id, '  新名字  ')
+    expect(next[0].name).toBe('新名字')
+    expect(next[1].name).toBe('B')
+    expect(items[0].name).toBe('A') // 不可变，原数组不受影响
+  })
+})
+
+describe('uniqueSnapshotName', () => {
+  it('重名时追加序号，避免列表里两条一模一样的名字', () => {
+    const items = [snap('保守方案'), snap('保守方案 2')]
+    expect(uniqueSnapshotName(items, '保守方案')).toBe('保守方案 3')
+    expect(uniqueSnapshotName(items, '激进方案')).toBe('激进方案')
+  })
+
+  it('名字已到长度上限时仍不超出上限', () => {
+    const long = 'x'.repeat(40)
+    const name = uniqueSnapshotName([snap(long)], long)
+    expect(name.length).toBeLessThanOrEqual(40)
+    expect(name).not.toBe(long)
+  })
+})
+
+describe('formatSavedAt / defaultSnapshotName', () => {
+  it('非法时间戳原样返回，不在列表里显示 NaN', () => {
+    expect(formatSavedAt('不是时间')).toBe('不是时间')
+  })
+
+  it('默认名按本地时间补零', () => {
+    expect(defaultSnapshotName(new Date(2026, 8, 5, 9, 7))).toBe('09-05 09:07 方案')
+    expect(formatSavedAt(new Date(2026, 8, 5, 9, 7).toISOString())).toBe('09-05 09:07')
+  })
+})

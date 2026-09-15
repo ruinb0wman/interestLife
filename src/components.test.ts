@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import App from './App.vue'
@@ -7,6 +7,11 @@ import CashFlowItemRow from './components/CashFlowItemRow.vue'
 import DetailTable from './components/DetailTable.vue'
 import ParameterPanel from './components/ParameterPanel.vue'
 import StatCards from './components/StatCards.vue'
+import SnapshotPanel from './components/SnapshotPanel.vue'
+import { formatWan } from './format'
+import { DEFAULT_MC_CONFIG } from './lib'
+import { readStateFromStorage } from './persist'
+import { createSnapshot, writeSnapshots } from './snapshots'
 import {
   analyze,
   cloneParams,
@@ -442,6 +447,111 @@ describe('App 结论横幅', () => {
     expect(html).toContain('type="warning"')
 
     // 卸载以取消 App 里去抖的持久化计时器，避免测试结束后才触发副作用
+    wrapper.unmount()
+  })
+})
+
+describe('SnapshotPanel', () => {
+  // el-drawer 默认 teleport 到 body，直接把插槽摊平到原地更好断言
+  const drawerStub = { template: '<div><slot /></div>' }
+
+  function mountPanel(overrides: Partial<SimParams> = {}) {
+    return mount(SnapshotPanel, {
+      props: {
+        open: true,
+        params: { ...cloneParams(DEFAULT_PARAMS), ...overrides },
+        mc: { ...DEFAULT_MC_CONFIG },
+      },
+      global: { stubs: { ElDrawer: drawerStub } },
+    })
+  }
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('没有快照时显示空态提示', () => {
+    const wrapper = mountPanel()
+    expect(wrapper.text()).toContain('还没有快照')
+    expect(wrapper.findAll('button').some((b) => b.text() === '载入')).toBe(false)
+  })
+
+  it('列表里的结论是按快照参数实时算出来的，不是存下来的', () => {
+    writeSnapshots([
+      createSnapshot(DEFAULT_PARAMS, DEFAULT_MC_CONFIG, '默认方案'), // 悲观 4% → 65 岁耗尽
+      createSnapshot(
+        { ...cloneParams(DEFAULT_PARAMS), pessimisticReturn: 0.1 },
+        DEFAULT_MC_CONFIG,
+        '悲观也乐观',
+      ),
+    ])
+
+    const wrapper = mountPanel()
+    const text = wrapper.text()
+
+    expect(text).toContain('默认方案')
+    expect(text).toContain('悲观情景 65 岁耗尽')
+    expect(text).toContain('悲观也乐观')
+    expect(text).toContain('悲观情景也能躺平')
+    // 普通情景终值取自 analyze(simulate(params))，与别处口径一致
+    const expected = analyze(simulate(DEFAULT_PARAMS), DEFAULT_PARAMS).finalBalance
+    expect(text).toContain(formatWan(expected))
+  })
+
+  it('点「载入」把整条快照 emit 给父层，并关闭抽屉', async () => {
+    writeSnapshots([createSnapshot(DEFAULT_PARAMS, DEFAULT_MC_CONFIG, '待载入')])
+    const wrapper = mountPanel()
+
+    const loadButton = wrapper.findAll('button').find((b) => b.text() === '载入')!
+    await loadButton.trigger('click')
+
+    expect(wrapper.emitted('load')?.[0]?.[0]).toMatchObject({ name: '待载入' })
+    expect(wrapper.emitted('update:open')?.[0]).toEqual([false])
+  })
+})
+
+describe('App 快照', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    localStorage.clear()
+  })
+
+  // 快照只存参数，所以「载入」必须真的把参数换成快照里的那一套，
+  // 并走原有的持久化链路写回本地（否则刷新就回到旧参数了）。
+  it('载入快照会覆盖当前参数，并写回本地', async () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    params.initialPrincipal = 4_000_000
+    params.annualReturn = 0.1
+    writeSnapshots([createSnapshot(params, DEFAULT_MC_CONFIG, '高收益高本金')])
+
+    vi.useFakeTimers()
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          ElAlert: true,
+          ElDrawer: { template: '<div><slot /></div>' },
+          ParameterPanel: true,
+          StressTest: true,
+          CashFlowChart: true,
+          StatCards: true,
+          DetailTable: true,
+        },
+      },
+    })
+
+    expect(readStateFromStorage()?.params.initialPrincipal).not.toBe(4_000_000)
+
+    const loadButton = wrapper.findAll('button').find((b) => b.text() === '载入')!
+    await loadButton.trigger('click')
+    await nextTick()
+
+    // 参数已换成快照里的那套；去抖 200ms 后才落盘
+    await vi.advanceTimersByTimeAsync(300)
+    const persisted = readStateFromStorage()
+    expect(persisted?.params.initialPrincipal).toBe(4_000_000)
+    expect(persisted?.params.annualReturn).toBe(0.1)
+    expect(wrapper.html()).toContain('快照 1')
+
     wrapper.unmount()
   })
 })

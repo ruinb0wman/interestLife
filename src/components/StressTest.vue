@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { monteCarlo, type McConfig, type McResult, type SimParams } from '../lib'
 import { formatPercent, formatWan, formatYuan } from '../format'
 
-const props = defineProps<{ params: SimParams }>()
+const props = defineProps<{ params: SimParams; resetToken?: number }>()
 const config = defineModel<McConfig>('config', { required: true })
 
 const running = ref(false)
@@ -17,6 +17,18 @@ const ranSigma = ref<number | null>(null)
 
 const inputKey = computed(() => JSON.stringify([props.params, config.value]))
 const stale = computed(() => result.value !== null && ranWith.value !== inputKey.value)
+
+// 载入快照/撤销时父层递增 resetToken：旧结果属于另一套参数，
+// 且 MC 随机不可复现，留着只会让人误以为快照「记得」当时那个存活率。
+watch(
+  () => props.resetToken,
+  () => {
+    result.value = null
+    ranWith.value = null
+    ranDrift.value = null
+    ranSigma.value = null
+  },
+)
 
 /**
  * 通胀随机游走的「基准」= 各支出项自己的年涨幅（growth）。

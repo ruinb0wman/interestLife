@@ -56,7 +56,8 @@ const NUMBER_LIMITS: Record<string, [number, number]> = {
 const INTEGER_FIELDS = new Set(['startAge', 'endAge'])
 const PERIODS: readonly Period[] = ['once', 'month', 'year']
 
-function asRecord(value: unknown): Record<string, unknown> {
+/** 读取外部输入的统一入口：快照模块也复用它，保持「外部输入一律不可信」只在一处收口 */
+export function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
 }
 

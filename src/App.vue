@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, h, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { ElButton, ElMessage } from 'element-plus'
 import {
   analyze,
   cloneParams,
@@ -24,6 +24,8 @@ import CashFlowChart from './components/CashFlowChart.vue'
 import StatCards from './components/StatCards.vue'
 import DetailTable from './components/DetailTable.vue'
 import StressTest from './components/StressTest.vue'
+import SnapshotPanel from './components/SnapshotPanel.vue'
+import { listSnapshots, type Snapshot } from './snapshots'
 
 // 启动时的状态优先级：URL hash（分享链接）> localStorage（上次编辑）> 默认值
 const initial = loadInitialState()
@@ -40,6 +42,50 @@ const pessimisticRows = computed(() => simulateScenario(params, params.pessimist
 const analysis = computed(() => analyze(rows.value, params))
 const pessimisticAnalysis = computed(() => analyze(pessimisticRows.value, params))
 const conclusion = computed(() => verdict(analysis.value, pessimisticAnalysis.value))
+
+// ── 方案快照 ─────────────────────────────────────────────────────
+const snapshotOpen = ref(false)
+const snapshotCount = ref(listSnapshots().length)
+/**
+ * 载入快照会递增这个 token，让 StressTest 把上一次的蒙特卡洛结果清掉。
+ * 快照按选定方案只存参数、不存结果，而 MC 用 Math.random() 重跑不复现，
+ * 所以留着上一套参数跑出来的「存活率」比清空更容易误导。
+ */
+const mcResetToken = ref(0)
+/** 载入前的状态，供 toast 里的「撤销」回滚；两个数组已是深拷贝，不会与正在编辑的项共享引用 */
+let undoState: { params: SimParams; mc: McConfig } | null = null
+
+const snapshotLabel = computed(() =>
+  snapshotCount.value > 0 ? `快照 ${snapshotCount.value}` : '快照',
+)
+
+function loadSnapshot(snapshot: Snapshot) {
+  undoState = { params: cloneParams(params), mc: { ...mcConfig.value } }
+  Object.assign(params, cloneParams(snapshot.params))
+  mcConfig.value = { ...snapshot.mc }
+  mcResetToken.value++
+
+  ElMessage({
+    duration: 6000,
+    message: h('span', null, [
+      `已载入快照「${snapshot.name}」`,
+      h(
+        ElButton,
+        { link: true, type: 'primary', size: 'small', style: 'margin-left: 8px', onClick: undoLoad },
+        () => '撤销',
+      ),
+    ]),
+  })
+}
+
+function undoLoad() {
+  if (!undoState) return
+  Object.assign(params, undoState.params)
+  mcConfig.value = undoState.mc
+  undoState = null
+  mcResetToken.value++
+  ElMessage.success('已撤销，回到载入前的参数')
+}
 
 function currentState(): AppState {
   return {
@@ -111,6 +157,7 @@ async function copyShareLink() {
       <div class="header-row">
         <h1>躺平财务模拟器 <span class="sub">· 不交社保版</span></h1>
         <div class="header-actions">
+          <el-button size="small" plain @click="snapshotOpen = true">{{ snapshotLabel }}</el-button>
           <el-button size="small" plain @click="copyShareLink">复制方案链接</el-button>
           <el-button size="small" plain @click="resetAll">重置默认</el-button>
         </div>
@@ -184,7 +231,7 @@ async function copyShareLink() {
 
     <ParameterPanel v-model="params" />
 
-    <StressTest :params="params" v-model:config="mcConfig" />
+    <StressTest :params="params" v-model:config="mcConfig" :reset-token="mcResetToken" />
 
     <CashFlowChart
       :rows="rows"
@@ -203,6 +250,14 @@ async function copyShareLink() {
       :optimistic-rows="optimisticRows"
       :pessimistic-rows="pessimisticRows"
       :params="params"
+    />
+
+    <SnapshotPanel
+      v-model:open="snapshotOpen"
+      :params="params"
+      :mc="mcConfig"
+      @load="loadSnapshot"
+      @change="snapshotCount = $event"
     />
   </div>
 </template>
