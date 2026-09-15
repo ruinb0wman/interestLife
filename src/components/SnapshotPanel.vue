@@ -12,7 +12,6 @@ import {
   formatSavedAt,
   listSnapshots,
   removeSnapshot,
-  renameSnapshot,
   uniqueSnapshotName,
   writeSnapshots,
   type Snapshot,
@@ -23,8 +22,6 @@ const props = defineProps<{ params: SimParams; mc: McConfig }>()
 const emit = defineEmits<{ load: [snapshot: Snapshot]; change: [count: number] }>()
 
 const items = ref<Snapshot[]>(listSnapshots())
-const renamingId = ref<string | null>(null)
-const renameDraft = ref('')
 /** 上次写入是否成功；失败时内存里的列表不再与存储一致，不能再拿存储去覆盖它 */
 const persistFailed = ref(false)
 
@@ -102,19 +99,6 @@ async function saveCurrent() {
   commit(addSnapshot(items.value, snapshot), `已保存快照「${snapshot.name}」`)
 }
 
-function startRename(snapshot: Snapshot) {
-  renamingId.value = snapshot.id
-  renameDraft.value = snapshot.name
-}
-
-function commitRename() {
-  const id = renamingId.value
-  if (!id) return
-  renamingId.value = null
-  const next = renameSnapshot(items.value, id, renameDraft.value)
-  if (next !== items.value) commit(next)
-}
-
 async function confirmRemove(snapshot: Snapshot) {
   try {
     await ElMessageBox.confirm(`删除快照「${snapshot.name}」？删除后无法恢复。`, '删除快照', {
@@ -154,6 +138,7 @@ function pessimisticText(row: SnapshotRow): string {
     <p class="snap-hint">
       快照只保存参数（收益率与全部收支项）。载入后主图、指标卡、逐年明细会实时重算，
       结果与保存时一致；蒙特卡洛是随机模拟、重跑不复现，所以载入后需要重新运行。
+      快照创建后即为<b>只读记录</b>：参数与名字都不能再改，只能载入或删除。
     </p>
 
     <div v-if="rows.length === 0" class="snap-empty">
@@ -163,16 +148,7 @@ function pessimisticText(row: SnapshotRow): string {
     <ul v-else class="snap-list">
       <li v-for="row in rows" :key="row.snapshot.id" class="snap-item">
         <div class="snap-head">
-          <el-input
-            v-if="renamingId === row.snapshot.id"
-            v-model="renameDraft"
-            class="snap-rename"
-            size="small"
-            :maxlength="SNAPSHOT_NAME_MAX"
-            @keyup.enter="commitRename"
-            @blur="commitRename"
-          />
-          <span v-else class="snap-name" :title="row.snapshot.name">{{ row.snapshot.name }}</span>
+          <span class="snap-name" :title="row.snapshot.name">{{ row.snapshot.name }}</span>
           <span class="snap-time">{{ formatSavedAt(row.snapshot.savedAt) }}</span>
         </div>
 
@@ -190,7 +166,6 @@ function pessimisticText(row: SnapshotRow): string {
 
         <div class="snap-actions">
           <el-button size="small" type="primary" plain @click="load(row.snapshot)">载入</el-button>
-          <el-button size="small" plain @click="startRename(row.snapshot)">重命名</el-button>
           <el-button size="small" plain @click="confirmRemove(row.snapshot)">删除</el-button>
         </div>
       </li>
@@ -254,9 +229,6 @@ function pessimisticText(row: SnapshotRow): string {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-}
-.snap-rename {
-  flex: 1;
 }
 .snap-time {
   font-size: 12px;

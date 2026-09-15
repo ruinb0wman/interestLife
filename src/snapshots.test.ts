@@ -11,7 +11,6 @@ import {
   formatSavedAt,
   listSnapshots,
   removeSnapshot,
-  renameSnapshot,
   uniqueSnapshotName,
   writeSnapshots,
   type Snapshot,
@@ -135,7 +134,7 @@ describe('listSnapshots / writeSnapshots', () => {
   })
 })
 
-describe('addSnapshot / removeSnapshot / renameSnapshot', () => {
+describe('addSnapshot / removeSnapshot', () => {
   it('新快照插到最前，超过上限时丢弃最旧的', () => {
     let items: Snapshot[] = []
     for (let i = 0; i < MAX_SNAPSHOTS + 3; i++) items = addSnapshot(items, snap(`S${i}`))
@@ -154,16 +153,22 @@ describe('addSnapshot / removeSnapshot / renameSnapshot', () => {
     expect(next.map((item) => item.name)).toEqual(['B'])
   })
 
-  it('重命名：id 不存在 / 名字没变 / 空名字都是 no-op，正常情况只改那一条', () => {
-    const items = [snap('A'), snap('B')]
-    expect(renameSnapshot(items, '不存在', 'X')).toBe(items)
-    expect(renameSnapshot(items, items[0].id, 'A')).toBe(items)
-    expect(renameSnapshot(items, items[0].id, '   ')).toBe(items)
+  // 回归：「重命名」已按「快照创建后即只读」的需求移除。
+  // 这里钉住的是它的结构性前提——改原对象动不了已存快照，以后谁再想加回改名，
+  // 得先把这条推翻。
+  it('快照不可变：创建后改动原 params 不影响已存快照', () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    writeSnapshots([createSnapshot(params, DEFAULT_MC_CONFIG, '快照')])
 
-    const next = renameSnapshot(items, items[0].id, '  新名字  ')
-    expect(next[0].name).toBe('新名字')
-    expect(next[1].name).toBe('B')
-    expect(items[0].name).toBe('A') // 不可变，原数组不受影响
+    params.initialPrincipal = 9_999_999
+    params.pessimisticReturn = 0.1
+    params.expenses[0].amount = 88_888
+
+    const [stored] = listSnapshots()
+    expect(stored.params.initialPrincipal).toBe(DEFAULT_PARAMS.initialPrincipal)
+    expect(stored.params.pessimisticReturn).toBe(DEFAULT_PARAMS.pessimisticReturn)
+    expect(stored.params.expenses[0].amount).toBe(DEFAULT_PARAMS.expenses[0].amount)
+    expect(stored.name).toBe('快照')
   })
 })
 

@@ -508,6 +508,29 @@ describe('SnapshotPanel', () => {
     expect(wrapper.emitted('load')?.[0]?.[0]).toMatchObject({ name: '待载入' })
     expect(wrapper.emitted('update:open')?.[0]).toEqual([false])
   })
+
+  // 需求：快照创建后即只读。删掉「重命名」后，行内不应该再有任何可写控件，
+  // 也不应该有第二个能改到快照的入口。
+  it('每行只有「载入 / 删除」，没有任何可编辑控件，并写明只读', () => {
+    writeSnapshots([createSnapshot(DEFAULT_PARAMS, DEFAULT_MC_CONFIG, '只读记录')])
+    const wrapper = mountPanel()
+
+    const row = wrapper.find('.snap-item')
+    expect(row.findAll('input')).toHaveLength(0)
+    expect(row.findAll('button').map((b) => b.text())).toEqual(['载入', '删除'])
+    expect(wrapper.text()).toContain('只读记录')
+  })
+
+  // 行内的数字必须来自快照里那一套参数，而不是当前正在编辑的 props.params，
+  // 否则「只看不动」的语义就不成立（当前参数一改，历史记录的结论也跟着变）。
+  it('行内结论取自快照记录，不随当前编辑参数变化', () => {
+    writeSnapshots([createSnapshot(DEFAULT_PARAMS, DEFAULT_MC_CONFIG, '存档')]) // 悲观 4% → 65 岁耗尽
+    const wrapper = mountPanel({ pessimisticReturn: 0.1 }) // 当前在编辑的这套：悲观 10% 能躺平
+
+    expect(wrapper.text()).toContain('悲观情景 65 岁耗尽')
+    expect(wrapper.text()).not.toContain('悲观情景也能躺平')
+    expect(wrapper.text()).toContain(formatWan(analyze(simulate(DEFAULT_PARAMS), DEFAULT_PARAMS).finalBalance))
+  })
 })
 
 describe('App 快照', () => {

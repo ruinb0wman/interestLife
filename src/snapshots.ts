@@ -32,6 +32,9 @@ export interface Snapshot {
   mc: McConfig
 }
 
+// 注意：Snapshot 是只读记录（创建后不改），但字段没加 readonly 修饰——
+// sanitizeSnapshot 需要先构造再规整，加 readonly 会把构造路径也锁死。
+
 /**
  * 访问 localStorage。
  * 不用 `typeof localStorage === 'undefined'` 一把梭：某些沙箱 iframe / 隐私模式下
@@ -153,13 +156,6 @@ export function removeSnapshot(items: Snapshot[], id: string): Snapshot[] {
   return next.length === items.length ? items : next
 }
 
-/** 重命名；id 不存在或名字没变时原样返回 */
-export function renameSnapshot(items: Snapshot[], id: string, name: string): Snapshot[] {
-  const trimmed = sanitizeName(name, '')
-  if (trimmed.length === 0) return items
-  const index = items.findIndex((item) => item.id === id)
-  if (index === -1 || items[index].name === trimmed) return items
-  const next = items.slice()
-  next[index] = { ...next[index], name: trimmed }
-  return next
-}
+// 快照是**只读记录**：创建之后不得再修改（名字也不行）。
+// 参数在 createSnapshot 里就是深拷贝，所以不可变是结构性保证；
+// 曾经有过 renameSnapshot()，现已删掉——保留它等于给「史前记录可被改写」留后门。
