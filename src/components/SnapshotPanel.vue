@@ -31,7 +31,9 @@ const persistFailed = ref(false)
 // 抽屉是随 App 一起挂载的，列表只在 setup 时读一次。
 // 打开时重读：另一个标签页可能刚存过快照（写入失败时例外，否则会把内存里的条目刷掉）。
 watch(open, (isOpen) => {
-  if (isOpen && !persistFailed.value) items.value = listSnapshots()
+  if (!isOpen || persistFailed.value) return
+  items.value = listSnapshots()
+  emit('change', items.value.length)
 })
 
 interface SnapshotRow {
@@ -127,8 +129,9 @@ async function confirmRemove(snapshot: Snapshot) {
 }
 
 function load(snapshot: Snapshot) {
-  emit('load', snapshot)
+  // 先关抽屉再通知父层：万一父层的载入处理抛了异常，抽屉不会卡在打开状态
   open.value = false
+  emit('load', snapshot)
 }
 
 /** 悲观情景一句话结论 */
