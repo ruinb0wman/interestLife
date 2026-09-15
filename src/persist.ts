@@ -2,19 +2,27 @@
 //
 // URL 里的内容是不可信输入，因此 decode 一律先过 sanitize：
 // 逐字段校验类型、夹紧到安全边界、与默认值合并（旧链接缺字段也不会炸）。
-// 安全边界的存在意义之一是防止 targetAge 被构造成 1e9 之类导致 simulate 死循环。
+// 安全边界的存在意义之一是防止 endAge 被构造成 1e9 之类导致 simulate 死循环。
+//
+// 版本策略：STATE_VERSION 变更意味着配置结构不兼容，旧链接/旧本地缓存直接作废
+// 回退默认值（见 deserializeState 的 version 检查），不提供 v1 → v2 迁移。
 
 import {
   DEFAULT_MC_CONFIG,
   DEFAULT_PARAMS,
+  cloneItems,
+  cloneParams,
+  type CashFlowItem,
+  type Frequency,
   type McConfig,
-  type OneOffExpense,
   type SimParams,
 } from './lib'
 
-export const STATE_VERSION = 1
+export const STATE_VERSION = 2
 export const HASH_KEY = 's'
-export const STORAGE_KEY = 'interestlife.state.v1'
+export const STORAGE_KEY = 'interestlife.state.v2'
+/** 每个收支项列表的条数上限（收入、支出各自计算） */
+export const MAX_CASHFLOW_ITEMS = 50
 
 /** 完整可分享状态 */
 export interface AppState {
@@ -29,49 +37,21 @@ const AGE_MAX = 200
 const RATE_MIN = -0.99
 const RATE_MAX = 10
 const MONEY_MAX = 1e12
-const MAX_ONE_OFF = 50
+const CYCLE_MAX = 200
+const NAME_MAX = 24
+const ID_MAX = 64
 
 const NUMBER_LIMITS: Record<string, [number, number]> = {
   startAge: [AGE_MIN, AGE_MAX],
-  targetAge: [AGE_MIN, AGE_MAX],
-  salaryStopAge: [AGE_MIN, AGE_MAX],
-  carReplaceInterval: [1, 100],
-  monthlySalary: [0, MONEY_MAX],
-  salaryGrowth: [RATE_MIN, RATE_MAX],
-  monthlyLiving: [0, MONEY_MAX],
-  livingGrowth: [RATE_MIN, RATE_MAX],
+  endAge: [AGE_MIN, AGE_MAX],
   initialPrincipal: [0, MONEY_MAX],
   annualReturn: [RATE_MIN, RATE_MAX],
   optimisticReturn: [RATE_MIN, RATE_MAX],
   pessimisticReturn: [RATE_MIN, RATE_MAX],
-  initialCarPrice: [0, MONEY_MAX],
-  carPriceGrowth: [RATE_MIN, RATE_MAX],
-  medicalStartAge: [AGE_MIN, AGE_MAX],
-  monthlyMedical: [0, MONEY_MAX],
-  medicalGrowth: [RATE_MIN, RATE_MAX],
-  monthlyExtraIncome: [0, MONEY_MAX],
-  extraIncomeGrowth: [RATE_MIN, RATE_MAX],
-  extraIncomeStopAge: [AGE_MIN, AGE_MAX],
 }
 
-const INTEGER_FIELDS = new Set([
-  'startAge',
-  'targetAge',
-  'salaryStopAge',
-  'carReplaceInterval',
-  'medicalStartAge',
-  'extraIncomeStopAge',
-])
-
-const BOOLEAN_FIELDS = [
-  'enableSalary',
-  'enableInvestment',
-  'enableLiving',
-  'enableCar',
-  'enableMedical',
-  'enableExtraIncome',
-  'enableOneOff',
-] as const
+const INTEGER_FIELDS = new Set(['startAge', 'endAge'])
+const FREQUENCIES: readonly Frequency[] = ['month', 'year']
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
@@ -82,25 +62,55 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
   return Math.min(max, Math.max(min, n))
 }
 
-function sanitizeOneOff(raw: unknown): OneOffExpense[] {
-  if (!Array.isArray(raw)) return []
-  const out: OneOffExpense[] = []
-  for (const item of raw.slice(0, MAX_ONE_OFF)) {
-    const entry = asRecord(item)
-    if (typeof entry.age !== 'number' || !Number.isFinite(entry.age)) continue
-    if (typeof entry.amount !== 'number' || !Number.isFinite(entry.amount)) continue
-    out.push({
-      age: Math.round(clampNumber(entry.age, DEFAULT_PARAMS.startAge, AGE_MIN, AGE_MAX)),
-      amount: clampNumber(entry.amount, 0, 0, MONEY_MAX),
-    })
+/**
+ * 把任意输入规整成合法收支项。
+ * 项内自洽：startAge > endAge 时收敛为同一年（该项永不触发对用户没有意义）。
+ * 这里不把项内年龄绑定到全局 startAge/endAge——否则用户调整结束年龄会让
+ * 已填好的项年龄被静默改写。
+ */
+function sanitizeCashFlowItem(raw: unknown, index: number, prefix: string): CashFlowItem {
+  const entry = asRecord(raw)
+  const label = prefix === 'income' ? '收入' : '支出'
+
+  const startAge = Math.round(clampNumber(entry.startAge, DEFAULT_PARAMS.startAge, AGE_MIN, AGE_MAX))
+  const endAge = Math.max(
+    startAge,
+    Math.round(clampNumber(entry.endAge, startAge, AGE_MIN, AGE_MAX)),
+  )
+
+  const frequency = FREQUENCIES.includes(entry.frequency as Frequency)
+    ? (entry.frequency as Frequency)
+    : 'year'
+
+  const rawName = typeof entry.name === 'string' ? entry.name.trim().slice(0, NAME_MAX) : ''
+  const rawId = typeof entry.id === 'string' ? entry.id.trim().slice(0, ID_MAX) : ''
+
+  return {
+    id: rawId.length > 0 ? rawId : `${prefix}-${index}`,
+    name: rawName.length > 0 ? rawName : `${label}${index + 1}`,
+    amount: clampNumber(entry.amount, 0, 0, MONEY_MAX),
+    frequency,
+    // cycle === 0 是合法值（仅发生一次），因此下界为 0
+    cycle: Math.round(clampNumber(entry.cycle, 1, 0, CYCLE_MAX)),
+    growth: clampNumber(entry.growth, 0, RATE_MIN, RATE_MAX),
+    startAge,
+    endAge,
+    enabled: typeof entry.enabled === 'boolean' ? entry.enabled : true,
   }
-  return out
+}
+
+function sanitizeItems(raw: unknown, prefix: string, fallback: CashFlowItem[]): CashFlowItem[] {
+  // 与标量字段一致：类型不对（含缺失 / null）退回默认项，显式空数组则尊重用户的选择
+  if (!Array.isArray(raw)) return cloneItems(fallback)
+  return raw
+    .slice(0, MAX_CASHFLOW_ITEMS)
+    .map((item, index) => sanitizeCashFlowItem(item, index, prefix))
 }
 
 /** 把任意输入规整成合法 SimParams：类型不对就退回默认值，数值越界就夹紧 */
 export function sanitizeParams(raw: unknown): SimParams {
   const input = asRecord(raw)
-  const out: Record<string, unknown> = { ...DEFAULT_PARAMS, oneOffExpenses: [] }
+  const out: Record<string, unknown> = { ...DEFAULT_PARAMS }
 
   for (const [key, [min, max]] of Object.entries(NUMBER_LIMITS)) {
     const fallback = DEFAULT_PARAMS[key as keyof SimParams] as number
@@ -108,26 +118,16 @@ export function sanitizeParams(raw: unknown): SimParams {
     out[key] = INTEGER_FIELDS.has(key) ? Math.round(value) : value
   }
 
-  for (const key of BOOLEAN_FIELDS) {
-    out[key] = typeof input[key] === 'boolean' ? input[key] : DEFAULT_PARAMS[key]
-  }
-
-  out.oneOffExpenses = sanitizeOneOff(input.oneOffExpenses)
-
-  // 年龄顺序修正：否则 simulate() 会因 startAge >= targetAge 直接返回空集
+  // 年龄顺序修正：否则 simulate() 会因 startAge >= endAge 直接返回空集
   let startAge = out.startAge as number
-  if (startAge >= (out.targetAge as number)) {
+  if (startAge >= (out.endAge as number)) {
     if (startAge >= AGE_MAX) startAge = AGE_MAX - 1
     out.startAge = startAge
-    out.targetAge = startAge + 1
+    out.endAge = startAge + 1
   }
 
-  // 这三项只做安全夹紧，不跟 targetAge 绑定：
-  // 线上应用里把 targetAge 调小并不会回写它们，夹到 targetAge 反而会让
-  // 「最近的参数」在刷新后静默变化。
-  for (const key of ['salaryStopAge', 'medicalStartAge', 'extraIncomeStopAge']) {
-    out[key] = Math.round(clampNumber(out[key], startAge, startAge, AGE_MAX))
-  }
+  out.incomes = sanitizeItems(input.incomes, 'income', DEFAULT_PARAMS.incomes)
+  out.expenses = sanitizeItems(input.expenses, 'expense', DEFAULT_PARAMS.expenses)
 
   return out as unknown as SimParams
 }
@@ -157,7 +157,7 @@ export function sanitizeMcConfig(raw: unknown): McConfig {
 export function defaultState(): AppState {
   return {
     version: STATE_VERSION,
-    params: { ...DEFAULT_PARAMS, oneOffExpenses: [] },
+    params: cloneParams(DEFAULT_PARAMS),
     mc: { ...DEFAULT_MC_CONFIG },
   }
 }
@@ -180,12 +180,17 @@ export function serializeState(state: AppState): string {
   return toBase64Url(JSON.stringify(state))
 }
 
-/** 反序列化 + 规整；仅在 base64 / JSON 损坏时返回 null */
+/**
+ * 反序列化 + 规整。
+ * 仅在 base64 / JSON 损坏，或版本号不匹配（如 v1 旧链接）时返回 null。
+ * 缺 version 字段的 payload 视为当前版本，保持与「旧链接缺字段也不炸」一致的宽容度。
+ */
 export function deserializeState(text: string): AppState | null {
   try {
     const parsed: unknown = JSON.parse(fromBase64Url(text))
     const raw = asRecord(parsed)
     if (Object.keys(raw).length === 0) return null
+    if (typeof raw.version === 'number' && raw.version !== STATE_VERSION) return null
     return {
       version: STATE_VERSION,
       params: sanitizeParams(raw.params),
