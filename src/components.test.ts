@@ -72,6 +72,7 @@ describe('App 结论横幅', () => {
     const wrapper = mount(App, {
       global: {
         stubs: {
+          ElAlert: true,
           ParameterPanel: true,
           StressTest: true,
           CashFlowChart: true,

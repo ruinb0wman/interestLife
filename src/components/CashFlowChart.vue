@@ -1,8 +1,46 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import * as echarts from 'echarts'
+import * as echarts from 'echarts/core'
+import { BarChart, LineChart, ScatterChart } from 'echarts/charts'
+import {
+  GridComponent,
+  LegendComponent,
+  MarkLineComponent,
+  TooltipComponent,
+} from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import type { BarSeriesOption, LineSeriesOption, ScatterSeriesOption } from 'echarts/charts'
+import type {
+  GridComponentOption,
+  LegendComponentOption,
+  MarkLineComponentOption,
+  TooltipComponentOption,
+} from 'echarts/components'
 import type { YearRow } from '../lib'
 import { formatWanShort } from '../format'
+
+// 按需注册：只引入用到的图表与组件，避免整个 echarts 进 bundle
+// （全量引入约 1MB，按需后只剩零头）。新增图表类型时需要在这里补注册。
+echarts.use([
+  LineChart,
+  BarChart,
+  ScatterChart,
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+  MarkLineComponent,
+  CanvasRenderer,
+])
+
+type ChartOption = echarts.ComposeOption<
+  | LineSeriesOption
+  | BarSeriesOption
+  | ScatterSeriesOption
+  | GridComponentOption
+  | TooltipComponentOption
+  | LegendComponentOption
+  | MarkLineComponentOption
+>
 
 const props = defineProps<{
   rows: YearRow[]
@@ -13,7 +51,7 @@ const props = defineProps<{
 const el = ref<HTMLDivElement | null>(null)
 let chart: echarts.ECharts | null = null
 
-function buildOption(rows: YearRow[]): echarts.EChartsOption {
+function buildOption(rows: YearRow[]): ChartOption {
   const optimisticRows = props.optimisticRows ?? rows
   const pessimisticRows = props.pessimisticRows ?? rows
   const startAge = rows[0]?.age ?? 0
@@ -201,10 +239,20 @@ function handleResize() {
   chart?.resize()
 }
 
+// ResizeObserver 比 window.resize 可靠：容器自身尺寸变化（侧栏折叠、
+// 响应式布局切换）也会触发，而 window.resize 只有窗口尺寸变化才触发。
+let observer: ResizeObserver | null = null
+
 onMounted(() => {
   chart = echarts.init(el.value!)
   render()
-  window.addEventListener('resize', handleResize)
+
+  if (typeof ResizeObserver !== 'undefined' && el.value) {
+    observer = new ResizeObserver(handleResize)
+    observer.observe(el.value)
+  } else {
+    window.addEventListener('resize', handleResize)
+  }
 })
 
 watch(
@@ -213,6 +261,8 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  observer?.disconnect()
+  observer = null
   window.removeEventListener('resize', handleResize)
   chart?.dispose()
   chart = null
