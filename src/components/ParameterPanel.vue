@@ -1,195 +1,175 @@
 <script setup lang="ts">
-import type { SimParams } from '../lib'
+import { computed } from 'vue'
+import { CASHFLOW_PRESETS, createItem, type SimParams } from '../lib'
+import CashFlowItemRow from './CashFlowItemRow.vue'
 
 const model = defineModel<SimParams>({ required: true })
 
-const moneyFields = [
-  { key: 'monthlySalary', label: '初始月薪', unit: '元/月', step: 100 },
-  { key: 'monthlyLiving', label: '初始月生活费', unit: '元/月', step: 100 },
-  { key: 'initialPrincipal', label: '初始投资本金', unit: '元', step: 1000 },
-  { key: 'initialCarPrice', label: '初始新车价格', unit: '元', step: 1000 },
+const incomePresets = computed(() => CASHFLOW_PRESETS.filter((p) => p.type === 'income'))
+const expensePresets = computed(() => CASHFLOW_PRESETS.filter((p) => p.type === 'expense'))
+
+const rateFields = [
+  { key: 'annualReturn', label: '普通收益率', hint: '主曲线' },
+  { key: 'optimisticReturn', label: '乐观收益率', hint: '上界情景' },
+  { key: 'pessimisticReturn', label: '悲观收益率', hint: '下界情景' },
 ] as const
 
-const percentFields = [
-  { key: 'salaryGrowth', label: '年薪涨幅', unit: '', step: 0.01 },
-  { key: 'livingGrowth', label: '生活费年涨幅', unit: '', step: 0.01 },
-  { key: 'annualReturn', label: '中性收益率', unit: '', step: 0.01 },
-  { key: 'carPriceGrowth', label: '车价年涨幅', unit: '', step: 0.01 },
-] as const
-
-const toggles = [
-  { key: 'enableSalary', label: '工资收入' },
-  { key: 'enableInvestment', label: '投资收益' },
-  { key: 'enableLiving', label: '生活费支出' },
-  { key: 'enableCar', label: '换车支出' },
-  { key: 'enableMedical', label: '医疗支出' },
-  { key: 'enableExtraIncome', label: '零工收入' },
-  { key: 'enableOneOff', label: '一次性支出' },
-] as const
-
-function addOneOff() {
-  model.value.oneOffExpenses.push({ age: 60, amount: 200000 })
+function addItem(type: 'income' | 'expense', presetKey: unknown) {
+  const key = String(presetKey)
+  const list = type === 'income' ? model.value.incomes : model.value.expenses
+  list.push(createItem(key, model.value.startAge, model.value.endAge))
 }
-function removeOneOff(index: number) {
-  model.value.oneOffExpenses.splice(index, 1)
+
+function removeItem(type: 'income' | 'expense', index: number) {
+  const list = type === 'income' ? model.value.incomes : model.value.expenses
+  list.splice(index, 1)
+}
+
+function resetList(type: 'income' | 'expense') {
+  const list = type === 'income' ? model.value.incomes : model.value.expenses
+  list.splice(0, list.length)
 }
 </script>
 
 <template>
   <div class="panel">
     <div class="card param-card">
-      <div class="card-title">时间设定</div>
-      <p class="card-hint">工资发到「工资结束年龄」为止；首次换车 = 初始年龄 + 买车周期，此后每周期一次</p>
+      <div class="card-title">基础信息</div>
+      <p class="card-hint">模拟区间与起始本金；所有收支项都在这段区间内按周期触发</p>
       <div class="param-grid">
         <div class="param-item">
-          <label>初始年龄</label>
+          <label>开始年龄</label>
           <div class="input-row">
-            <el-input-number v-model="model.startAge" :min="16" :max="model.targetAge - 1" :precision="0" :step="1" :controls-position="'right'" />
+            <el-input-number
+              v-model="model.startAge"
+              :min="16"
+              :max="model.endAge - 1"
+              :precision="0"
+              :step="1"
+              :controls-position="'right'"
+            />
             <span class="unit">岁</span>
-          </div>
-        </div>
-        <div class="param-item">
-          <label>目标年龄</label>
-          <div class="input-row">
-            <el-input-number v-model="model.targetAge" :min="model.startAge + 1" :max="120" :precision="0" :step="1" :controls-position="'right'" />
-            <span class="unit">岁</span>
-          </div>
-        </div>
-        <div class="param-item">
-          <label>工资结束年龄</label>
-          <div class="input-row">
-            <el-input-number v-model="model.salaryStopAge" :min="model.startAge" :max="model.targetAge" :precision="0" :step="1" :controls-position="'right'" />
-            <span class="unit">岁</span>
-          </div>
-        </div>
-        <div class="param-item">
-          <label>买车周期</label>
-          <div class="input-row">
-            <el-input-number v-model="model.carReplaceInterval" :min="1" :max="40" :precision="0" :step="1" :controls-position="'right'" />
-            <span class="unit">年</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card param-card">
-      <div class="card-title">收支参数</div>
-      <p class="card-hint">涨幅 / 利率以小数输入，如 3% 填 0.03；中性收益率用于主曲线</p>
-      <div class="param-grid">
-        <div v-for="f in moneyFields" :key="f.key" class="param-item">
-          <label>{{ f.label }}</label>
-          <div class="input-row">
-            <el-input-number v-model="model[f.key]" :min="0" :step="f.step" :controls-position="'right'" />
-            <span class="unit">{{ f.unit }}</span>
-          </div>
-        </div>
-        <div v-for="f in percentFields" :key="f.key" class="param-item">
-          <label>{{ f.label }}</label>
-          <div class="input-row">
-            <el-input-number v-model="model[f.key]" :min="-0.9" :max="9.9999" :step="f.step" :precision="4" :controls-position="'right'" />
-            <span class="unit">小数</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card param-card">
-      <div class="card-title">情景与风险</div>
-      <p class="card-hint">三情景对照用于观察破产点；医疗/零工/一次性支出默认关闭（金额为 0 或空列表）</p>
-
-      <div class="sub-title">收益率情景</div>
-      <div class="param-grid">
-        <div class="param-item">
-          <label>乐观收益率</label>
-          <div class="input-row">
-            <el-input-number v-model="model.optimisticReturn" :min="-0.9" :max="9.9999" :step="0.01" :precision="4" :controls-position="'right'" />
-            <span class="unit">小数</span>
-          </div>
-        </div>
-        <div class="param-item">
-          <label>悲观收益率</label>
-          <div class="input-row">
-            <el-input-number v-model="model.pessimisticReturn" :min="-0.9" :max="9.9999" :step="0.01" :precision="4" :controls-position="'right'" />
-            <span class="unit">小数</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="sub-title">老年医疗 / 护理支出</div>
-      <div class="param-grid">
-        <div class="param-item">
-          <label>起始年龄</label>
-          <div class="input-row">
-            <el-input-number v-model="model.medicalStartAge" :min="model.startAge" :max="model.targetAge" :precision="0" :step="1" :controls-position="'right'" />
-            <span class="unit">岁</span>
-          </div>
-        </div>
-        <div class="param-item">
-          <label>月支出</label>
-          <div class="input-row">
-            <el-input-number v-model="model.monthlyMedical" :min="0" :step="100" :controls-position="'right'" />
-            <span class="unit">元/月</span>
-          </div>
-        </div>
-        <div class="param-item">
-          <label>年涨幅</label>
-          <div class="input-row">
-            <el-input-number v-model="model.medicalGrowth" :min="-0.9" :max="9.9999" :step="0.01" :precision="4" :controls-position="'right'" />
-            <span class="unit">小数</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="sub-title">零工 / 其他收入（工资停发后）</div>
-      <div class="param-grid">
-        <div class="param-item">
-          <label>月收入</label>
-          <div class="input-row">
-            <el-input-number v-model="model.monthlyExtraIncome" :min="0" :step="100" :controls-position="'right'" />
-            <span class="unit">元/月</span>
-          </div>
-        </div>
-        <div class="param-item">
-          <label>年涨幅</label>
-          <div class="input-row">
-            <el-input-number v-model="model.extraIncomeGrowth" :min="-0.9" :max="9.9999" :step="0.01" :precision="4" :controls-position="'right'" />
-            <span class="unit">小数</span>
           </div>
         </div>
         <div class="param-item">
           <label>结束年龄</label>
           <div class="input-row">
-            <el-input-number v-model="model.extraIncomeStopAge" :min="model.salaryStopAge + 1" :max="model.targetAge" :precision="0" :step="1" :controls-position="'right'" />
+            <el-input-number
+              v-model="model.endAge"
+              :min="model.startAge + 1"
+              :max="120"
+              :precision="0"
+              :step="1"
+              :controls-position="'right'"
+            />
             <span class="unit">岁</span>
           </div>
         </div>
+        <div class="param-item">
+          <label>初始本金</label>
+          <div class="input-row">
+            <el-input-number
+              v-model="model.initialPrincipal"
+              :min="0"
+              :step="1000"
+              :controls-position="'right'"
+            />
+            <span class="unit">元</span>
+          </div>
+        </div>
       </div>
-
-      <div class="sub-title">一次性大额支出（大病 / 意外）</div>
-      <div v-if="model.oneOffExpenses.length === 0" class="empty-hint">未设置任何一次性支出（默认为空）</div>
-      <div v-for="(exp, i) in model.oneOffExpenses" :key="i" class="oneoff-row">
-        <span>第 {{ i + 1 }} 笔</span>
-        <el-input-number v-model="exp.age" :min="model.startAge" :max="model.targetAge" :precision="0" :step="1" :controls-position="'right'" />
-        <span class="unit">岁，支出</span>
-        <el-input-number v-model="exp.amount" :min="0" :step="5000" :controls-position="'right'" />
-        <span class="unit">元</span>
-        <el-button size="small" type="danger" text @click="removeOneOff(i)">删除</el-button>
-      </div>
-      <el-button class="add-btn" size="small" plain @click="addOneOff">+ 添加一次性支出</el-button>
     </div>
 
-    <div class="card toggle-card">
-      <div class="card-title">盈亏项启用 / 停用</div>
-      <p class="card-hint">关闭某项后，该项当期计为 0（用于找出“躺平不破产”的边界）</p>
-      <div class="toggle-grid">
-        <div
-          v-for="t in toggles"
-          :key="t.key"
-          class="toggle-item"
-          :class="{ 'is-on': model[t.key] }"
-        >
-          <span>{{ t.label }}</span>
-          <el-switch v-model="model[t.key]" />
+    <div class="card param-card">
+      <div class="card-title">收入项</div>
+      <p class="card-hint">
+        涨幅按各项自身起始年龄复利；周期「每 N 年一次」的首次触发在开始年龄。填了「元/月」的项会自动 ×12 折算成年额
+      </p>
+      <div v-if="model.incomes.length === 0" class="empty-hint">未设置任何收入（默认参数为「工资」）</div>
+      <div class="item-list">
+        <CashFlowItemRow
+          v-for="(it, i) in model.incomes"
+          :key="it.id"
+          v-model="model.incomes[i]"
+          type="income"
+          :range-start="model.startAge"
+          :range-end="model.endAge"
+          @remove="removeItem('income', i)"
+        />
+      </div>
+      <div class="list-actions">
+        <el-dropdown @command="(key: unknown) => addItem('income', key)">
+          <el-button size="small" plain>+ 添加收入项</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-for="p in incomePresets" :key="p.key" :command="p.key">
+                <span class="preset-label">{{ p.label }}</span>
+                <span class="preset-hint">{{ p.hint }}</span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button v-if="model.incomes.length > 0" size="small" text @click="resetList('income')">
+          清空
+        </el-button>
+      </div>
+    </div>
+
+    <div class="card param-card">
+      <div class="card-title">支出项</div>
+      <p class="card-hint">
+        「仅一次」用于大病 / 意外这类单点支出；换车模板已按 25% 旧车残值预折算成净支出
+      </p>
+      <div v-if="model.expenses.length === 0" class="empty-hint">未设置任何支出（默认参数为「生活费 + 换车」）</div>
+      <div class="item-list">
+        <CashFlowItemRow
+          v-for="(it, i) in model.expenses"
+          :key="it.id"
+          v-model="model.expenses[i]"
+          type="expense"
+          :range-start="model.startAge"
+          :range-end="model.endAge"
+          @remove="removeItem('expense', i)"
+        />
+      </div>
+      <div class="list-actions">
+        <el-dropdown @command="(key: unknown) => addItem('expense', key)">
+          <el-button size="small" plain>+ 添加支出项</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-for="p in expensePresets" :key="p.key" :command="p.key">
+                <span class="preset-label">{{ p.label }}</span>
+                <span class="preset-hint">{{ p.hint }}</span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <el-button v-if="model.expenses.length > 0" size="small" text @click="resetList('expense')">
+          清空
+        </el-button>
+      </div>
+    </div>
+
+    <div class="card param-card">
+      <div class="card-title">投资收益</div>
+      <p class="card-hint">
+        涨幅 / 利率以小数输入，如 3% 填 0.03；三档收益率用于主曲线与悲观情景对照（压力测试只随机「普通收益率」）
+      </p>
+      <div class="param-grid">
+        <div v-for="f in rateFields" :key="f.key" class="param-item">
+          <label>{{ f.label }}</label>
+          <div class="input-row">
+            <el-input-number
+              v-model="model[f.key]"
+              :min="-0.9"
+              :max="9.9999"
+              :step="0.01"
+              :precision="4"
+              :controls-position="'right'"
+            />
+            <span class="unit">小数</span>
+          </div>
+          <span class="field-hint">{{ f.hint }}</span>
         </div>
       </div>
     </div>
@@ -218,26 +198,9 @@ function removeOneOff(index: number) {
   font-size: 12px;
   color: var(--text-3);
   margin: 4px 0 14px;
-}
-.sub-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-2);
-  margin: 16px 0 10px;
-  padding-top: 12px;
-  border-top: 1px dashed var(--border);
-}
-.sub-title:first-of-type {
-  border-top: none;
-  padding-top: 0;
-  margin-top: 0;
+  line-height: 1.6;
 }
 .param-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-}
-.toggle-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 16px;
@@ -250,6 +213,10 @@ function removeOneOff(index: number) {
 .param-item label {
   font-size: 13px;
   color: var(--text-2);
+}
+.field-hint {
+  font-size: 12px;
+  color: var(--text-3);
 }
 .input-row {
   display: flex;
@@ -264,52 +231,37 @@ function removeOneOff(index: number) {
   color: var(--text-3);
   white-space: nowrap;
 }
-.toggle-item {
+.item-list {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 13px;
-  color: var(--text-2);
-  background: var(--toggle-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  transition:
-    background 0.2s,
-    border-color 0.2s;
-}
-.toggle-item.is-on {
-  background: var(--ok-bg);
-  border-color: var(--ok-border);
+  flex-direction: column;
+  gap: 10px;
 }
 .empty-hint {
   font-size: 12px;
   color: var(--text-3);
   margin-bottom: 10px;
 }
-.oneoff-row {
+.list-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
-  font-size: 13px;
-  color: var(--text-2);
+  margin-top: 12px;
 }
-.oneoff-row .el-input-number {
-  width: 130px;
+.preset-label {
+  font-weight: 500;
 }
-.add-btn {
-  margin-top: 4px;
+.preset-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--text-3);
 }
 @media (max-width: 1200px) {
-  .param-grid,
-  .toggle-grid {
+  .param-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 }
 @media (max-width: 640px) {
-  .param-grid,
-  .toggle-grid {
+  .param-grid {
     grid-template-columns: 1fr;
   }
 }
