@@ -4,13 +4,16 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import App from './App.vue'
 import CashFlowItemRow from './components/CashFlowItemRow.vue'
+import DetailTable from './components/DetailTable.vue'
 import ParameterPanel from './components/ParameterPanel.vue'
 import StatCards from './components/StatCards.vue'
 import {
   analyze,
+  cloneParams,
   createItem,
   DEFAULT_PARAMS,
   simulate,
+  simulateScenario,
   type Analysis,
   type CashFlowItem,
   type SimParams,
@@ -330,6 +333,91 @@ describe('ParameterPanel', () => {
     })
     expect(wrapper.text()).toContain('未设置任何收入')
     expect(wrapper.text()).toContain('未设置任何支出')
+  })
+})
+
+describe('DetailTable 情景切换', () => {
+  /**
+   * 「悬崖」配置：普通 6% 能躺平，悲观 4% 在 78 岁耗尽，且 78 不在
+   * 「从 30 岁起每 5 年」的抽样网格上（30/35/…/75/80）。
+   *
+   * 这正是用户报过的观感矛盾：普通情景 77 岁还有几百万，悲观情景 78 岁就耗尽。
+   * 两个数字属于不同收益率情景，不是「一年花掉几百万」。
+   */
+  function cliffParams(): SimParams {
+    const params = cloneParams(DEFAULT_PARAMS)
+    params.initialPrincipal = 600_000
+    params.annualReturn = 0.06
+    params.pessimisticReturn = 0.04
+    params.incomes = [{ ...createItem('salary', 30, 90), amount: 2500, endAge: 55 }]
+    params.expenses = [
+      { ...createItem('living', 30, 90), amount: 2500 },
+      createItem('car', 30, 90),
+    ]
+    return params
+  }
+
+  function mountTable(params: SimParams) {
+    return mount(DetailTable, {
+      props: {
+        rows: simulate(params),
+        optimisticRows: simulateScenario(params, params.optimisticReturn),
+        pessimisticRows: simulateScenario(params, params.pessimisticReturn),
+        params,
+      },
+    })
+  }
+
+  it('默认显示普通情景，并把收益率写进标签与汇总', () => {
+    const params = cliffParams()
+    const wrapper = mountTable(params)
+
+    expect(wrapper.text()).toContain('乐观 10%')
+    expect(wrapper.text()).toContain('普通 6%')
+    expect(wrapper.text()).toContain('悲观 4%')
+    expect(wrapper.text()).toContain('普通情景：90 岁年末本金')
+    // 普通情景不破产，所以不该出现耗尽文案
+    expect(wrapper.text()).not.toContain('资产耗尽')
+  })
+
+  it('切到悲观情景：汇总、耗尽提示与该行同步更新（断点年份不在 5 年网格上也要显示）', async () => {
+    const params = cliffParams()
+    const wrapper = mountTable(params)
+
+    // 悲观情景确实在 78 岁耗尽（前提校验，避免测试因参数漂移而失效）
+    const pessimistic = simulateScenario(params, params.pessimisticReturn)
+    expect(pessimistic[pessimistic.length - 1].age).toBe(78)
+    expect(pessimistic[pessimistic.length - 1].endPrincipal).toBeLessThan(0)
+
+    const radios = wrapper.findAll('input[type="radio"]')
+    expect(radios).toHaveLength(3)
+    await radios[2].setValue()
+
+    expect(wrapper.text()).toContain('悲观情景：78 岁资产耗尽')
+    expect(wrapper.text()).toContain('在 78 岁耗尽')
+    // 78 不在抽样网格上，但作为耗尽年必须补进表里
+    expect(wrapper.text()).toContain('耗尽年')
+    expect(wrapper.text()).toContain('78')
+  })
+
+  it('切回普通情景后耗尽提示消失', async () => {
+    const wrapper = mountTable(cliffParams())
+
+    const radios = wrapper.findAll('input[type="radio"]')
+    await radios[2].setValue()
+    expect(wrapper.text()).toContain('资产耗尽')
+
+    await radios[1].setValue()
+    expect(wrapper.text()).not.toContain('资产耗尽')
+    expect(wrapper.text()).toContain('普通情景：90 岁年末本金')
+  })
+
+  it('未传三情景数据时退化为单情景（向后兼容）', () => {
+    const params = cliffParams()
+    const wrapper = mount(DetailTable, { props: { rows: simulate(params), params } })
+
+    expect(wrapper.text()).toContain('普通情景')
+    expect(wrapper.findAll('input[type="radio"]')).toHaveLength(0)
   })
 })
 

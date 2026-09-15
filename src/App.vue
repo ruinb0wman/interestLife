@@ -200,7 +200,12 @@ async function copyShareLink() {
       :pessimistic-return="params.pessimisticReturn"
     />
 
-    <DetailTable :rows="rows" :params="params" />
+    <DetailTable
+      :rows="rows"
+      :optimistic-rows="optimisticRows"
+      :pessimistic-rows="pessimisticRows"
+      :params="params"
+    />
   </div>
 </template>
 
