@@ -162,7 +162,7 @@ export interface McConfig {
   iterations: number
   /** 年化收益率的波动率（σ） */
   returnVolatility: number
-  /** 各支出项涨幅（通胀）的波动率（σ） */
+  /** 各支出项涨幅的波动率（σ）。基准是「各项自己的 growth」，这里只是 σ，没有全局通胀率 */
   inflationVolatility: number
 }
 
@@ -550,7 +550,8 @@ function percentile(sorted: number[], p: number): number {
  * 不覆盖「实际长期收益率比普通情景更低」这类假设风险（那种情况由 simulateScenario(悲观) 回答）。
  * 收益为 iid 抽样、无序列相关/regime switching，因此持久性低收益情景抽不出来：
  * 即使把 σ 拉到 0.12，也不等价于「均值掉到悲观收益率」。UI 必须写明这一口径。
- * 每个「支出项」的单次金额涨幅 ~ N(该项涨幅, 通胀波动率) 逐年随机游走
+ * 每个「支出项」的单次金额涨幅 ~ N(该项涨幅, 支出涨幅波动率) 逐年随机游走
+ * （基准 = 各项自己的 growth；字段名仍叫 inflationVolatility 以免破坏分享链接/存档兼容）
  * （收入项涨幅固定），共 iterations 次模拟，
  * 统计全程本金从未为负的成功率与最终资产分位。
  *

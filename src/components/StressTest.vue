@@ -12,9 +12,22 @@ const result = ref<McResult | null>(null)
 const ranWith = ref<string | null>(null)
 /** 运行时实际用的漂移（普通收益率）：参数已变更时仍显示「本次跑的是什么」 */
 const ranDrift = ref<number | null>(null)
+/** 运行时实际的收益波动率 σ：同理，避免 stale 状态下这一行显示成新值 */
+const ranSigma = ref<number | null>(null)
 
 const inputKey = computed(() => JSON.stringify([props.params, config.value]))
 const stale = computed(() => result.value !== null && ranWith.value !== inputKey.value)
+
+/**
+ * 通胀随机游走的「基准」= 各支出项自己的年涨幅（growth）。
+ * 卡片里只暴露 σ，没有全局通胀率输入框，所以这里把基准显式列出来，避免用户满世界找它。
+ * 已关闭的项不出现在列表里（occurrencesInYear 里 enabled=false 直接计 0，对结果无影响）。
+ */
+const baseGrowths = computed(() =>
+  props.params.expenses
+    .filter((item) => item.enabled)
+    .map((item) => ({ id: item.id, name: item.name, growth: item.growth })),
+)
 
 async function run() {
   running.value = true
@@ -23,6 +36,7 @@ async function run() {
   try {
     result.value = monteCarlo(props.params, config.value)
     ranDrift.value = props.params.annualReturn
+    ranSigma.value = config.value.returnVolatility
     ranWith.value = key
   } finally {
     running.value = false
@@ -41,7 +55,8 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
     <div class="card-title">蒙特卡洛压力测试</div>
     <p class="card-hint">
       每年收益率 ~ N(<b>普通收益率 {{ formatPercent(params.annualReturn) }}</b>, 收益波动率)；
-      每个支出项的涨幅 ~ N(该项涨幅, 通胀波动率) 逐年随机游走（收入项涨幅固定）。
+      每个支出项的涨幅 ~ N(该项涨幅, 支出涨幅波动率) 逐年随机游走（收入项涨幅固定）。
+      注：这里没有「全局通胀率」输入框，基础通胀率就是各项自己的年涨幅（下方已列出）。
       统计“全程本金从未为负”的成功率与最终资产分布。
       与主图一致，某次模拟一旦资不抵债就在当年截断，缺口计入最终资产，不再推演负债雪球。
     </p>
@@ -62,7 +77,7 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
         <el-input-number v-model="config.returnVolatility" :min="0.005" :max="0.2" :step="0.005" :precision="3" :controls-position="'right'" />
       </div>
       <div class="param-item">
-        <label>通胀波动率</label>
+        <label>支出涨幅波动率</label>
         <el-input-number v-model="config.inflationVolatility" :min="0.005" :max="0.2" :step="0.005" :precision="3" :controls-position="'right'" />
       </div>
       <div class="param-item run-col">
@@ -71,6 +86,11 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
         </el-button>
       </div>
     </div>
+    <p v-if="baseGrowths.length > 0" class="mc-base">
+      基准涨幅 = 各项自己的年涨幅（即上框的基础通胀率，波动率以此为中心）：
+      <span v-for="(item, i) in baseGrowths" :key="item.id">{{ i > 0 ? ' / ' : ''
+        }}<b>{{ item.name }} {{ formatPercent(item.growth) }}</b></span>
+    </p>
 
     <div v-if="result" class="mc-result" :class="{ 'is-stale': stale }">
       <div class="mc-rate" :class="rateTone(result.successRate)">
@@ -101,7 +121,7 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
       </div>
       <p class="mc-note">
         本次模拟基准：普通收益率 {{ formatPercent(ranDrift ?? props.params.annualReturn) }}（非悲观情景）
-        · 收益波动率 σ = {{ config.returnVolatility }}。
+        · 收益波动率 σ = {{ ranSigma ?? config.returnVolatility }}。
         成功率为 {{ formatPercent(result.successRate) }}；
         最终资产最低 {{ formatYuan(result.worstFinal) }}、中位 {{ formatYuan(result.p50Final) }}。
         <template v-if="result.p50DepletedAge !== null">
@@ -141,6 +161,15 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
 }
 .card-hint b {
   color: inherit;
+  font-weight: 600;
+}
+.mc-base {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 10px;
+}
+.mc-base b {
+  color: var(--text-2);
   font-weight: 600;
 }
 .mc-grid {
