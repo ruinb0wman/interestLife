@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   analyze,
+  cloneParams,
   simulate,
   simulateScenario,
   verdict,
@@ -43,7 +44,7 @@ const conclusion = computed(() => verdict(analysis.value, pessimisticAnalysis.va
 function currentState(): AppState {
   return {
     version: STATE_VERSION,
-    params: { ...params, oneOffExpenses: params.oneOffExpenses.map((o) => ({ ...o })) },
+    params: cloneParams(params),
     mc: { ...mcConfig.value },
   }
 }
@@ -66,10 +67,7 @@ onBeforeUnmount(() => clearTimeout(persistTimer))
 
 function resetAll() {
   const fresh = defaultState()
-  Object.assign(params, {
-    ...fresh.params,
-    oneOffExpenses: fresh.params.oneOffExpenses.map((o) => ({ ...o })),
-  })
+  Object.assign(params, cloneParams(fresh.params))
   mcConfig.value = fresh.mc
   ElMessage.success('已恢复默认参数')
 }
@@ -118,8 +116,8 @@ async function copyShareLink() {
         </div>
       </div>
       <p class="desc">
-        模拟一位 30 岁起、不交社保、不买房、不生子的人，靠投资 + 零散工作度过 60 年。
-        调整下方参数，找出<b>躺平不破产</b>的条件。参数会自动保存在本地并写入地址栏，复制链接即可分享方案。
+        模拟从「开始年龄」到「结束年龄」的逐年现金流：投资收益 + 各项收入 − 各项支出。
+        调整收支项与收益率，找出<b>躺平不破产</b>的条件。参数会自动保存在本地并写入地址栏，复制链接即可分享方案。
       </p>
       <p v-if="showLoadedHint" class="loaded-hint">
         {{ loadedFrom === 'url' ? '已从分享链接载入参数（修改后会覆盖链接内容）' : '已恢复上次编辑的参数' }}
@@ -137,9 +135,9 @@ async function copyShareLink() {
     >
       <template #default>
         即使在悲观收益率（{{ formatPercent(params.pessimisticReturn) }}）下，
-        {{ analysis.targetAge }} 岁时仍有 {{ formatWan(pessimisticAnalysis.finalBalance) }}，
+        {{ analysis.endAge }} 岁时仍有 {{ formatWan(pessimisticAnalysis.finalBalance) }}，
         全程最低点 {{ formatWan(pessimisticAnalysis.minBalance) }}（{{ pessimisticAnalysis.minBalanceAge }} 岁）；
-        中性情景（{{ formatPercent(params.annualReturn) }}）下为
+        普通情景（{{ formatPercent(params.annualReturn) }}）下为
         {{ formatWan(analysis.finalBalance) }}。
       </template>
     </el-alert>
@@ -149,7 +147,7 @@ async function copyShareLink() {
       :closable="false"
       show-icon
       class="banner"
-      title="中性可躺平，但悲观情景存在失效风险"
+      title="普通情景可躺平，但悲观情景存在失效风险"
     >
       <template #default>
         悲观收益率（{{ formatPercent(params.pessimisticReturn) }}）下
@@ -157,11 +155,11 @@ async function copyShareLink() {
           资产在 <b>{{ pessimisticAnalysis.firstNegativeAge }} 岁</b>耗尽，
           缺口 {{ formatWan(pessimisticAnalysis.finalBalance) }}（此后不再推演）；
         </template>
-        <template v-else>目标年龄时资产正好耗尽；</template>
-        中性情景（{{ formatPercent(params.annualReturn) }}）最终仍有
+        <template v-else>结束年龄时资产正好耗尽；</template>
+        普通情景（{{ formatPercent(params.annualReturn) }}）最终仍有
         {{ formatWan(analysis.finalBalance) }}，全程最低点 {{ formatWan(analysis.minBalance) }}
         （{{ analysis.minBalanceAge }} 岁）。
-        建议压低生活费/医疗涨幅、提高本金或收益率。
+        建议压低支出项涨幅、提高本金或收益率。
       </template>
     </el-alert>
     <el-alert
@@ -170,17 +168,17 @@ async function copyShareLink() {
       :closable="false"
       show-icon
       class="banner"
-      title="会破产，无法躺平到目标年龄"
+      title="会破产，无法躺平到结束年龄"
     >
       <template #default>
         资产在
         <template v-if="analysis.firstNegativeAge >= 0">
           <b>{{ analysis.firstNegativeAge }} 岁</b>耗尽
         </template>
-        <template v-else>目标年龄时耗尽</template>
+        <template v-else>结束年龄时耗尽</template>
         ，缺口 {{ formatWan(analysis.finalBalance) }}（此后不再推演），
         全程最低点为 {{ analysis.minBalanceAge }} 岁的 {{ formatYuan(analysis.minBalance) }}。
-        试试提高本金 / 收益率，或压低生活费涨幅、停用换车/医疗支出。
+        试试提高本金 / 收益率，或压低支出项涨幅、停用大额支出项。
       </template>
     </el-alert>
 
@@ -192,6 +190,8 @@ async function copyShareLink() {
       :rows="rows"
       :optimistic-rows="optimisticRows"
       :pessimistic-rows="pessimisticRows"
+      :incomes="params.incomes"
+      :expenses="params.expenses"
     />
 
     <StatCards

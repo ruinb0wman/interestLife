@@ -18,43 +18,39 @@ interface StatCard {
 
 function balanceCard(name: string, a: Analysis, hint: string): StatCard {
   return a.survives
-    ? { label: `${a.targetAge} 岁总资产（${name}）`, amount: a.finalBalance, hint }
+    ? { label: `${a.endAge} 岁总资产（${name}）`, amount: a.finalBalance, hint }
     : { label: `${a.firstNegativeAge} 岁资产耗尽（${name}）`, amount: a.finalBalance, hint }
 }
 
-function nodeCard(label: string, amount: number | null, hint: string): StatCard {
-  return { label, amount, hint }
-}
-
 // 必须用 computed：label / hint 依赖 props，写成普通常量只会在 setup 时求值一次，
-// 之后参数变化不会更新（例如「停薪后」卡片的年龄与最低本金年龄会一直是旧值）。
+// 之后参数变化不会更新（例如「最低本金」卡片的年龄与区间会一直是旧值）。
 const cards = computed<StatCard[]>(() => {
   const a = props.analysis
   const p = props.pessimisticAnalysis
-  const span = a.targetAge - a.startAge
+  const span = a.endAge - a.startAge
 
   return [
-    balanceCard('中性', a, a.survives ? '模拟结束时的全部身家' : '耗尽当年的资金缺口'),
+    balanceCard('普通', a, a.survives ? '模拟结束时的全部身家' : '耗尽当年的资金缺口'),
     balanceCard(
       `悲观 ${formatPercent(props.pessimisticReturn)}`,
       p,
       p.survives ? '最坏情景下的剩余身家' : '耗尽当年的资金缺口',
     ),
-    nodeCard(
-      `${a.firstCarAge} 岁（第一次换车后）`,
-      a.afterFirstCar,
-      a.afterFirstCar === null ? `未模拟到，${a.simulatedThroughAge} 岁已耗尽` : '首次换车节点',
-    ),
-    nodeCard(
-      `${a.salaryStopAge + 1} 岁（停薪后）`,
-      a.afterSalaryStop,
-      a.afterSalaryStop === null ? `未模拟到，${a.simulatedThroughAge} 岁已耗尽` : '工资停发后的节点',
-    ),
-    nodeCard(
-      '最低本金',
-      a.minBalance,
-      `${a.minBalanceAge} 岁时为 ${span} 年内最低点`,
-    ),
+    {
+      label: '最低本金',
+      amount: a.minBalance,
+      hint: `${a.minBalanceAge} 岁时为 ${span} 年内最低点`,
+    },
+    {
+      label: '峰值本金',
+      amount: a.peakBalance,
+      hint: a.peakBalanceAge === a.startAge ? '模拟起点即最高点' : '模拟期内最高点',
+    },
+    {
+      label: '累计净收支',
+      amount: a.totalIncome - a.totalExpense,
+      hint: `收入 ${formatWan(a.totalIncome)} · 支出 ${formatWan(a.totalExpense)}`,
+    },
   ]
 })
 
