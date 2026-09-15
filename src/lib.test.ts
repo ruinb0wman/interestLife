@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   analyze,
   carYears,
+  DEFAULT_MC_CONFIG,
   DEFAULT_PARAMS,
   monteCarlo,
   simulate,
   simulateScenario,
   verdict,
+  type McResult,
   type SimParams,
 } from './lib'
 
@@ -23,6 +25,16 @@ function baseline(overrides: Partial<SimParams> = {}): SimParams {
     enableOneOff: false,
     ...overrides,
   }
+}
+
+/** 测试便捷封装：runMc(params, 模拟次数, 收益波动率, 通胀波动率) */
+function runMc(
+  params: SimParams,
+  iterations: number = DEFAULT_MC_CONFIG.iterations,
+  returnVolatility: number = DEFAULT_MC_CONFIG.returnVolatility,
+  inflationVolatility: number = DEFAULT_MC_CONFIG.inflationVolatility,
+): McResult {
+  return monteCarlo(params, { iterations, returnVolatility, inflationVolatility })
 }
 
 describe('carYears', () => {
@@ -245,8 +257,8 @@ describe('monteCarlo', () => {
       worstFinal: 0,
       p50DepletedAge: null,
     }
-    expect(monteCarlo(DEFAULT_PARAMS, 0, 0.02, 0.01)).toEqual(zero)
-    expect(monteCarlo(baseline({ startAge: 60, targetAge: 60 }), 100, 0.02, 0.01)).toEqual(zero)
+    expect(runMc(DEFAULT_PARAMS, 0, 0.02, 0.01)).toEqual(zero)
+    expect(runMc(baseline({ startAge: 60, targetAge: 60 }), 100, 0.02, 0.01)).toEqual(zero)
   })
 
   // 回归：MC 曾把通胀在「起始年」就累乘一次，与 simulate() 的
@@ -254,7 +266,7 @@ describe('monteCarlo', () => {
   it('波动率为 0 时收敛到确定性结果', () => {
     const params: SimParams = { ...DEFAULT_PARAMS }
     const deterministic = analyze(simulate(params), params).finalBalance
-    const mc = monteCarlo(params, 200, 0, 0)
+    const mc = runMc(params, 200, 0, 0)
 
     expect(mc.p50Final).toBeCloseTo(deterministic, -3)
     expect(mc.p5Final).toBeCloseTo(deterministic, -3)
@@ -264,7 +276,7 @@ describe('monteCarlo', () => {
   })
 
   it('分位数有序，且成功率与「全程未为负」一致', () => {
-    const mc = monteCarlo({ ...DEFAULT_PARAMS }, 300, 0.12, 0.02)
+    const mc = runMc({ ...DEFAULT_PARAMS }, 300, 0.12, 0.02)
     expect(mc.p5Final).toBeLessThanOrEqual(mc.p50Final)
     expect(mc.p50Final).toBeLessThanOrEqual(mc.p95Final)
     expect(mc.worstFinal).toBeLessThanOrEqual(mc.p5Final)
@@ -275,7 +287,7 @@ describe('monteCarlo', () => {
   // 回归：MC 旧实现不截断，破产样本的「最终资产」是雪球式负债，分位数严重失真
   it('破产样本按耗尽当年截断，并给出破产中位年龄', () => {
     const params: SimParams = { ...DEFAULT_PARAMS, monthlyLiving: 6_000 }
-    const mc = monteCarlo(params, 300, 0.12, 0.02)
+    const mc = runMc(params, 300, 0.12, 0.02)
 
     expect(mc.successRate).toBeLessThan(1)
     expect(mc.p50DepletedAge).not.toBeNull()
@@ -286,15 +298,15 @@ describe('monteCarlo', () => {
   })
 
   it('不破产时 p50DepletedAge 为 null', () => {
-    const mc = monteCarlo({ ...DEFAULT_PARAMS, monthlyLiving: 1_000 }, 200, 0.02, 0.01)
+    const mc = runMc({ ...DEFAULT_PARAMS, monthlyLiving: 1_000 }, 200, 0.02, 0.01)
     expect(mc.successRate).toBe(1)
     expect(mc.p50DepletedAge).toBeNull()
   })
 
   it('收益率为负时结果差于正收益率', () => {
     const base = { ...DEFAULT_PARAMS }
-    const good = monteCarlo({ ...base, annualReturn: 0.08 }, 200, 0, 0)
-    const bad = monteCarlo({ ...base, annualReturn: -0.02 }, 200, 0, 0)
+    const good = runMc({ ...base, annualReturn: 0.08 }, 200, 0, 0)
+    const bad = runMc({ ...base, annualReturn: -0.02 }, 200, 0, 0)
     expect(bad.successRate).toBeLessThan(good.successRate)
     expect(bad.p50Final).toBeLessThan(good.p50Final)
   })

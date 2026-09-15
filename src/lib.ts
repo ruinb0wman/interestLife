@@ -200,6 +200,22 @@ export interface McResult {
   p50DepletedAge: number | null
 }
 
+/** 蒙特卡洛压力测试的输入参数 */
+export interface McConfig {
+  /** 模拟次数 */
+  iterations: number
+  /** 年化收益率的波动率（σ） */
+  returnVolatility: number
+  /** 生活费涨幅（通胀）的波动率（σ） */
+  inflationVolatility: number
+}
+
+export const DEFAULT_MC_CONFIG: McConfig = {
+  iterations: 1000,
+  returnVolatility: 0.02,
+  inflationVolatility: 0.01,
+}
+
 /** 换车年份列表：初始年龄 + 周期，每周期一次，直到目标年龄 */
 export function carYears(startAge: number, targetAge: number, interval: number): number[] {
   // 周期非法时返回空列表：本函数对外导出、可被复用，
@@ -389,12 +405,8 @@ function percentile(sorted: number[], p: number): number {
  * 与 simulateScenario 一致，资不抵债即截断该次模拟，以耗尽当年的缺口计入最终资产，
  * 并记录耗尽年龄。
  */
-export function monteCarlo(
-  params: SimParams,
-  iterations: number,
-  returnVolatility: number,
-  inflationVolatility: number,
-): McResult {
+export function monteCarlo(params: SimParams, config: McConfig): McResult {
+  const { iterations, returnVolatility, inflationVolatility } = config
   const empty: McResult = {
     successRate: 0,
     p5Final: 0,

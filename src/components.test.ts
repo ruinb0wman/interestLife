@@ -84,5 +84,8 @@ describe('App 结论横幅', () => {
     const html = wrapper.html()
     expect(html).toContain('中性可躺平')
     expect(html).toContain('type="warning"')
+
+    // 卸载以取消 App 里去抖的持久化计时器，避免测试结束后才触发副作用
+    wrapper.unmount()
   })
 })

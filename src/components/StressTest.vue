@@ -1,26 +1,29 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
-import { monteCarlo, type McResult, type SimParams } from '../lib'
+import { computed, nextTick, ref } from 'vue'
+import { monteCarlo, type McConfig, type McResult, type SimParams } from '../lib'
 import { formatPercent, formatWan, formatYuan } from '../format'
 
 const props = defineProps<{ params: SimParams }>()
+const config = defineModel<McConfig>('config', { required: true })
 
-const iterations = ref(1000)
-const returnVolatility = ref(0.02)
-const inflationVolatility = ref(0.01)
 const running = ref(false)
 const result = ref<McResult | null>(null)
+/** 运行时的输入快照：用于判断已有结果是否已经对不上当前参数 */
+const ranWith = ref<string | null>(null)
+
+const inputKey = computed(() => JSON.stringify([props.params, config.value]))
+const stale = computed(() => result.value !== null && ranWith.value !== inputKey.value)
 
 async function run() {
   running.value = true
   await nextTick()
-  result.value = monteCarlo(
-    props.params,
-    iterations.value,
-    returnVolatility.value,
-    inflationVolatility.value,
-  )
-  running.value = false
+  const key = inputKey.value
+  try {
+    result.value = monteCarlo(props.params, config.value)
+    ranWith.value = key
+  } finally {
+    running.value = false
+  }
 }
 
 function rateTone(rate: number): 'good' | 'warn' | 'bad' {
@@ -41,15 +44,15 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
     <div class="mc-grid">
       <div class="param-item">
         <label>模拟次数</label>
-        <el-input-number v-model="iterations" :min="100" :max="5000" :step="100" :precision="0" :controls-position="'right'" />
+        <el-input-number v-model="config.iterations" :min="100" :max="5000" :step="100" :precision="0" :controls-position="'right'" />
       </div>
       <div class="param-item">
         <label>收益波动率</label>
-        <el-input-number v-model="returnVolatility" :min="0.005" :max="0.2" :step="0.005" :precision="3" :controls-position="'right'" />
+        <el-input-number v-model="config.returnVolatility" :min="0.005" :max="0.2" :step="0.005" :precision="3" :controls-position="'right'" />
       </div>
       <div class="param-item">
         <label>通胀波动率</label>
-        <el-input-number v-model="inflationVolatility" :min="0.005" :max="0.2" :step="0.005" :precision="3" :controls-position="'right'" />
+        <el-input-number v-model="config.inflationVolatility" :min="0.005" :max="0.2" :step="0.005" :precision="3" :controls-position="'right'" />
       </div>
       <div class="param-item run-col">
         <el-button type="primary" :loading="running" @click="run">
@@ -58,7 +61,7 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
       </div>
     </div>
 
-    <div v-if="result" class="mc-result">
+    <div v-if="result" class="mc-result" :class="{ 'is-stale': stale }">
       <div class="mc-rate" :class="rateTone(result.successRate)">
         <div class="mc-rate-num">{{ (result.successRate * 100).toFixed(1) }}%</div>
         <div class="mc-rate-label">存活成功率（全程不破产）</div>
@@ -91,6 +94,9 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
         <template v-if="result.p50DepletedAge !== null">
           破产的模拟中，有一半在 {{ result.p50DepletedAge }} 岁前就已耗尽资产。
         </template>
+      </p>
+      <p v-if="stale" class="mc-stale">
+        参数已变更，上方结果对应当前的上一版设置，请重新运行。
       </p>
     </div>
   </div>
@@ -197,6 +203,15 @@ function rateTone(rate: number): 'good' | 'warn' | 'bad' {
   font-size: 12px;
   color: var(--text-3);
   margin-top: 12px;
+  flex-basis: 100%;
+}
+.mc-result.is-stale {
+  opacity: 0.5;
+}
+.mc-stale {
+  font-size: 12px;
+  color: var(--warning);
+  margin-top: 4px;
   flex-basis: 100%;
 }
 @media (max-width: 900px) {
