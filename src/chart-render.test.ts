@@ -11,9 +11,24 @@ import { describe, expect, it, vi } from 'vitest'
 import { SVGRenderer } from 'echarts/renderers'
 import { buildChartOption } from './chart-option'
 import { echarts } from './chart-setup'
-import { DEFAULT_PARAMS, simulate, simulateScenario } from './lib'
+import { DEFAULT_PARAMS, createItem, simulate, simulateScenario, type SimParams } from './lib'
 
 echarts.use([SVGRenderer])
+
+/** 带一次性支出（柱状）与周期换车（虚线）的完整配置，覆盖 line / bar / scatter 三种系列 */
+function chartInput() {
+  const params: SimParams = {
+    ...DEFAULT_PARAMS,
+    expenses: [...DEFAULT_PARAMS.expenses, createItem('oneoff', 30, 90)],
+  }
+  return {
+    rows: simulate(params),
+    optimisticRows: simulateScenario(params, params.optimisticReturn),
+    pessimisticRows: simulateScenario(params, params.pessimisticReturn),
+    incomes: params.incomes,
+    expenses: params.expenses,
+  }
+}
 
 function renderAndCollectMessages(): string[] {
   const messages: string[] = []
@@ -27,15 +42,8 @@ function renderAndCollectMessages(): string[] {
   document.body.appendChild(host)
 
   try {
-    const params = { ...DEFAULT_PARAMS }
     const chart = echarts.init(host, null, { renderer: 'svg', width: 900, height: 420 })
-    chart.setOption(
-      buildChartOption({
-        rows: simulate(params),
-        optimisticRows: simulateScenario(params, params.optimisticReturn),
-        pessimisticRows: simulateScenario(params, params.pessimisticReturn),
-      }),
-    )
+    chart.setOption(buildChartOption(chartInput()))
     chart.dispose()
   } finally {
     warn.mockRestore()
@@ -56,16 +64,9 @@ describe('图表渲染所需的 echarts 注册', () => {
   it('能成功建出系列：line / bar / scatter 都被真正渲染', () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
-    const params = { ...DEFAULT_PARAMS }
 
     const chart = echarts.init(host, null, { renderer: 'svg', width: 900, height: 420 })
-    chart.setOption(
-      buildChartOption({
-        rows: simulate(params),
-        optimisticRows: simulateScenario(params, params.optimisticReturn),
-        pessimisticRows: simulateScenario(params, params.pessimisticReturn),
-      }),
-    )
+    chart.setOption(buildChartOption(chartInput()))
 
     const option = chart.getOption() as { series?: Array<{ type?: string }> }
     expect(option.series?.length).toBeGreaterThan(0)
