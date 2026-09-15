@@ -40,8 +40,8 @@ describe('serialize / deserialize', () => {
             id: 'inc-a',
             name: '工资',
             amount: 4_321,
-            frequency: 'month',
-            cycle: 1,
+            period: 'month',
+            interval: 1,
             growth: 0.03,
             startAge: 35,
             endAge: 55,
@@ -53,8 +53,8 @@ describe('serialize / deserialize', () => {
             id: 'exp-a',
             name: '换车',
             amount: 82_846.66,
-            frequency: 'year',
-            cycle: 10,
+            period: 'year',
+            interval: 10,
             growth: 0.01,
             startAge: 45,
             endAge: 88,
@@ -81,7 +81,7 @@ describe('serialize / deserialize', () => {
     expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/)
   })
 
-  // D3：结构不兼容的旧链接直接作废回退默认值，不做 v1 → v2 迁移
+  // D3：结构不兼容的旧链接直接作废回退默认值，不做跨版本迁移
   it('v1 旧链接（version 1）视为无效，回退默认值', () => {
     const legacy = serializeState({
       version: 1,
@@ -89,6 +89,23 @@ describe('serialize / deserialize', () => {
       mc: { ...DEFAULT_MC_CONFIG },
     })
     expect(deserializeState(legacy)).toBeNull()
+  })
+
+  // v2 用 frequency(金额单位) + cycle(每 N 年) 表达周期，语义与 v3 的 period + interval 不兼容：
+  // 若按同一版本号读入，换车（frequency:'year', cycle:10）会被当成「每月一次」，金额凭空 ×12。
+  it('v2 旧链接（version 2）也视为无效，避免周期语义被误读', () => {
+    const legacyV2 = serializeState({
+      version: 2,
+      params: {
+        startAge: 30,
+        endAge: 90,
+        expenses: [
+          { id: 'e', name: '换车', amount: 75_000, frequency: 'year', cycle: 10, growth: 0.01, startAge: 40, endAge: 90, enabled: true },
+        ],
+      } as unknown as SimParams,
+      mc: { ...DEFAULT_MC_CONFIG },
+    })
+    expect(deserializeState(legacyV2)).toBeNull()
   })
 
   it('缺 version 字段的 payload 视为当前版本（兼容手工构造的链接）', () => {
@@ -181,7 +198,7 @@ describe('sanitizeParams：收支项列表', () => {
       expect(Number.isFinite(entry.amount)).toBe(true)
       expect(Number.isFinite(entry.growth)).toBe(true)
       expect(entry.startAge).toBeLessThanOrEqual(entry.endAge)
-      expect(['month', 'year']).toContain(entry.frequency)
+      expect(['once', 'month', 'year']).toContain(entry.period)
       expect(entry.name.length).toBeGreaterThan(0)
       expect(entry.id.length).toBeGreaterThan(0)
     }
@@ -191,23 +208,26 @@ describe('sanitizeParams：收支项列表', () => {
     expect(p.incomes[2].id).toBe('income-2')
   })
 
-  it('启停、频率与周期的非法值被归一', () => {
+  it('启停、周期与间隔的非法值被归一', () => {
     const p = sanitizeParams({
       incomes: [
-        { name: 'a', frequency: 'weekly', cycle: 3.6, enabled: 'yes' },
-        { name: 'b', frequency: 'month', cycle: -5 },
-        { name: 'c', frequency: 'year', cycle: 0 },
-        { name: 'd', cycle: 1e9 },
+        { name: 'a', period: 'weekly', interval: 3.6, enabled: 'yes' },
+        { name: 'b', period: 'month', interval: -5 },
+        { name: 'c', period: 'year', interval: 0 },
+        { name: 'd', period: 'once', interval: 999 },
+        { name: 'e', interval: 1e9 },
       ],
     })
 
-    expect(p.incomes[0].frequency).toBe('year')
-    expect(p.incomes[0].cycle).toBe(4)
+    expect(p.incomes[0].period).toBe('month') // 非法 period 退回默认
+    expect(p.incomes[0].interval).toBe(4)
     expect(p.incomes[0].enabled).toBe(true) // 类型不对 → 退回默认启用
-    expect(p.incomes[1].frequency).toBe('month')
-    expect(p.incomes[1].cycle).toBe(0) // 负数夹到 0（= 仅一次）
-    expect(p.incomes[2].cycle).toBe(0) // 0 是合法值，必须原样保留
-    expect(p.incomes[3].cycle).toBe(200)
+    expect(p.incomes[1].period).toBe('month')
+    expect(p.incomes[1].interval).toBe(1) // 负数夹到下限 1
+    expect(p.incomes[2].interval).toBe(1) // 0 也夹到 1
+    expect(p.incomes[3].period).toBe('once')
+    expect(p.incomes[3].interval).toBe(1) // 仅一次没有间隔概念，强制回 1
+    expect(p.incomes[4].interval).toBe(1200)
   })
 
   it('enabled = false 被保留', () => {

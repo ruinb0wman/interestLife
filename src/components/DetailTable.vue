@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { occurrenceYears, type CashFlowItem, type SimParams, type YearRow } from '../lib'
+import {
+  monthlyOccurrencesPerYear,
+  occurrenceYears,
+  type CashFlowItem,
+  type SimParams,
+  type YearRow,
+} from '../lib'
 import { formatWan, formatYuan } from '../format'
 
 const props = defineProps<{ rows: YearRow[]; params: SimParams }>()
@@ -27,25 +33,35 @@ interface CyclicNote {
   text: string
 }
 
-/** 非「每年」的项：把触发年份摊开说明，方便核对周期口径 */
+/** 非「每月」的项：把周期摊开说明，方便核对发生口径 */
 const cyclicNotes = computed<CyclicNote[]>(() => {
   const all: CashFlowItem[] = [...props.params.incomes, ...props.params.expenses]
   const notes: CyclicNote[] = []
 
   for (const item of all) {
-    if (item.cycle === 1) continue
+    // 每月发生的项无需赘述
+    if (item.period === 'month' && item.interval === 1) continue
+
     const years = occurrenceYears(item, props.params.startAge, props.params.endAge)
     if (years.length === 0) {
-      notes.push({ name: item.name, text: '不在模拟区间内，未触发' })
+      notes.push({ name: item.name, text: '不在模拟区间内，未发生' })
       continue
     }
-    if (item.cycle === 0) {
+    if (item.period === 'once') {
       notes.push({ name: item.name, text: `仅 ${years[0]} 岁一次` })
+      continue
+    }
+    if (item.period === 'month') {
+      const perYear = monthlyOccurrencesPerYear(item.interval)
+      notes.push({
+        name: item.name,
+        text: `每 ${item.interval} 个月一次（每年约 ${perYear.toFixed(perYear === Math.round(perYear) ? 0 : 1)} 次）`,
+      })
       continue
     }
     const head = years.slice(0, 8).join(' / ')
     const tail = years.length > 8 ? ` … 共 ${years.length} 次` : `（共 ${years.length} 次）`
-    notes.push({ name: item.name, text: `每 ${item.cycle} 年一次：${head}${tail}` })
+    notes.push({ name: item.name, text: `每 ${item.interval} 年一次：${head}${tail}` })
   }
 
   return notes
@@ -111,7 +127,7 @@ const totals = computed(() => {
             累计收入 {{ formatWan(totals.income) }}、累计支出 {{ formatWan(totals.expense) }}。
             <template v-if="disabledCount > 0">另有 {{ disabledCount }} 个收支项已停用（当期计为 0）。</template>
           </p>
-          <p>换车等周期性支出已按「金额 × (1 + 涨幅)^(年龄 − 起始年龄)」逐年复利。</p>
+          <p>周期项的金额按「金额 × (1 + 涨幅)^(年龄 − 起始年龄)」逐年复利；月周期按当年实际发生次数累加。</p>
         </div>
       </el-collapse-item>
     </el-collapse>

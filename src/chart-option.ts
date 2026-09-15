@@ -106,7 +106,9 @@ export function buildChartOption(input: ChartOptionInput): ChartOption {
   })
   expenses.forEach((item, index) => {
     const data = pickItem(rows, 'expenses', index, length)
-    if (hasNonZero(data)) specs.push({ name: expenseNames[index], data, oneOff: item.cycle === 0 })
+    if (hasNonZero(data)) {
+      specs.push({ name: expenseNames[index], data, oneOff: item.period === 'once' })
+    }
   })
 
   // 只在有数据时占一个色号，避免「被过滤掉的项」把调色板空耗掉

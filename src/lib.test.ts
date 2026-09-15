@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
-  amountAt,
   analyze,
-  annualAmount,
+  averageAnnualAmount,
   createItem,
   DEFAULT_MC_CONFIG,
   DEFAULT_PARAMS,
   monteCarlo,
   occurrenceYears,
+  occurrencesInYear,
   occursAt,
+  perOccurrenceAmount,
   simulate,
   simulateScenario,
   verdict,
@@ -17,14 +18,14 @@ import {
   type SimParams,
 } from './lib'
 
-/** 收支项工厂：默认「全年 0 元、不产生任何影响」，逐个字段覆盖后用于定点验证 */
+/** 收支项工厂：默认「每 1 个月发生、金额 0」，逐个字段覆盖后用于定点验证 */
 function item(overrides: Partial<CashFlowItem> = {}): CashFlowItem {
   return {
     id: 'test-item',
     name: '项',
     amount: 0,
-    frequency: 'year',
-    cycle: 1,
+    period: 'month',
+    interval: 1,
     growth: 0,
     startAge: 30,
     endAge: 90,
@@ -61,63 +62,132 @@ function runMc(
   return monteCarlo(params, { iterations, returnVolatility, inflationVolatility })
 }
 
-describe('annualAmount / occursAt / occurrenceYears', () => {
-  it('每月金额按 12 个月折算为年额', () => {
-    expect(annualAmount(item({ amount: 3_000, frequency: 'month' }))).toBe(36_000)
-    expect(annualAmount(item({ amount: 3_000, frequency: 'year' }))).toBe(3_000)
+describe('occurrencesInYear：周期口径', () => {
+  it('once：只在 startAge 那年发生一次', () => {
+    const once = item({ period: 'once', startAge: 60, endAge: 90, amount: 1_000 })
+    expect(occurrencesInYear(once, 59)).toBe(0)
+    expect(occurrencesInYear(once, 60)).toBe(1)
+    expect(occurrencesInYear(once, 61)).toBe(0)
+    expect(occurrencesInYear(once, 70)).toBe(0)
   })
 
-  it('停用项一律不触发', () => {
-    const off = item({ enabled: false, startAge: 30, endAge: 90 })
-    for (let age = 30; age <= 90; age++) expect(occursAt(off, age)).toBe(false)
+  it('year + interval N：每 N 年一次，首次在 startAge', () => {
+    const decadal = item({ period: 'year', interval: 10, startAge: 40, endAge: 90 })
+    expect(occurrencesInYear(decadal, 39)).toBe(0)
+    expect(occurrencesInYear(decadal, 40)).toBe(1)
+    expect(occurrencesInYear(decadal, 41)).toBe(0)
+    expect(occurrencesInYear(decadal, 50)).toBe(1)
+
+    const everyYear = item({ period: 'year', interval: 1 })
+    expect(occurrencesInYear(everyYear, 30)).toBe(1)
+    expect(occurrencesInYear(everyYear, 31)).toBe(1)
+  })
+
+  it('month + interval 1 = 每月，一年 12 次', () => {
+    const monthly = item({ period: 'month', interval: 1 })
+    for (const age of [30, 45, 90]) expect(occurrencesInYear(monthly, age)).toBe(12)
+  })
+
+  it('month + interval 2 = 每两个月，一年 6 次', () => {
+    const bimonthly = item({ period: 'month', interval: 2 })
+    for (const age of [30, 45, 90]) expect(occurrencesInYear(bimonthly, age)).toBe(6)
+  })
+
+  it('month + interval 3 = 每三个月，一年 4 次', () => {
+    expect(occurrencesInYear(item({ period: 'month', interval: 3 }), 30)).toBe(4)
+  })
+
+  it('month + interval 12 = 每 12 个月，等价于每年一次', () => {
+    for (const age of [30, 31, 90]) {
+      expect(occurrencesInYear(item({ period: 'month', interval: 12 }), age)).toBe(1)
+    }
+  })
+
+  it('month + interval 不整除 12 时各年次数不均匀，但长期均值正确', () => {
+    const every5 = item({ amount: 1_000, period: 'month', interval: 5, startAge: 30, endAge: 35 })
+    expect([30, 31, 32, 33, 34, 35].map((age) => occurrencesInYear(every5, age))).toEqual([
+      3, 2, 3, 2, 2, 3,
+    ])
+    // 平均年额 = 1000 × 12/5 = 2400（各年实际 3000/2000 交替）
+    expect(averageAnnualAmount(every5)).toBeCloseTo(2_400, 6)
+  })
+
+  it('停用项一律不发生', () => {
+    const off = item({ enabled: false, period: 'month', interval: 1 })
+    for (let age = 30; age <= 90; age++) expect(occurrencesInYear(off, age)).toBe(0)
   })
 
   it('区间端点含 startAge 与 endAge', () => {
-    const it0 = item({ startAge: 35, endAge: 37 })
+    const it0 = item({ startAge: 35, endAge: 37, period: 'once' })
     expect(occursAt(it0, 34)).toBe(false)
     expect(occursAt(it0, 35)).toBe(true)
-    expect(occursAt(it0, 37)).toBe(true)
-    expect(occursAt(it0, 38)).toBe(false)
+    expect(occursAt(it0, 37)).toBe(false) // once 只在 startAge
+    const yearly = item({ startAge: 35, endAge: 37, period: 'year', interval: 1 })
+    expect(occursAt(yearly, 34)).toBe(false)
+    expect(occursAt(yearly, 37)).toBe(true)
+    expect(occursAt(yearly, 38)).toBe(false)
   })
 
-  it('cycle = 1 每年触发，cycle = N 每 N 年从 startAge 起触发', () => {
-    const yearly = item({ cycle: 1 })
-    expect(occursAt(yearly, 30)).toBe(true)
-    expect(occursAt(yearly, 31)).toBe(true)
+  it('间隔非法（NaN / Infinity / 负数 / 0）归一为每 1 个单位，不死循环', () => {
+    for (const interval of [Number.NaN, Number.POSITIVE_INFINITY, -5, 0, 0.4]) {
+      expect(occurrencesInYear(item({ period: 'year', interval }), 30)).toBe(1)
+      expect(occurrencesInYear(item({ period: 'month', interval }), 30)).toBe(12)
+    }
+  })
+})
 
-    const decadal = item({ startAge: 40, cycle: 10, endAge: 90 })
-    expect(occursAt(decadal, 39)).toBe(false)
-    expect(occursAt(decadal, 40)).toBe(true)
-    expect(occursAt(decadal, 41)).toBe(false)
-    expect(occursAt(decadal, 50)).toBe(true)
+describe('perOccurrenceAmount / averageAnnualAmount', () => {
+  it('单次金额按年复利，起始年系数为 1', () => {
+    const it0 = item({ amount: 3_000, growth: 0.03 })
+    expect(perOccurrenceAmount(it0, 30)).toBeCloseTo(3_000, 6)
+    expect(perOccurrenceAmount(it0, 31)).toBeCloseTo(3_000 * 1.03, 6)
+    expect(perOccurrenceAmount(it0, 32)).toBeCloseTo(3_000 * 1.03 ** 2, 6)
   })
 
-  it('cycle = 0 表示仅发生一次（startAge 那年）', () => {
-    const once = item({ startAge: 60, cycle: 0, endAge: 90 })
-    expect(occursAt(once, 59)).toBe(false)
-    expect(occursAt(once, 60)).toBe(true)
-    expect(occursAt(once, 61)).toBe(false)
-    expect(occursAt(once, 70)).toBe(false)
+  it('平均年额：月额 × 12 / 间隔，年额 / 间隔', () => {
+    expect(averageAnnualAmount(item({ amount: 3_000, period: 'month', interval: 1 }))).toBe(36_000)
+    expect(averageAnnualAmount(item({ amount: 3_000, period: 'month', interval: 2 }))).toBe(18_000)
+    expect(averageAnnualAmount(item({ amount: 3_000, period: 'month', interval: 3 }))).toBe(12_000)
+    expect(averageAnnualAmount(item({ amount: 75_000, period: 'year', interval: 1 }))).toBe(75_000)
+    expect(averageAnnualAmount(item({ amount: 75_000, period: 'year', interval: 10 }))).toBe(7_500)
   })
 
-  it('occurrenceYears 与旧 carYears(30, 90, 10) 口径一致', () => {
-    const car = item({ startAge: 40, cycle: 10, endAge: 90 })
+  it('once 没有年额概念，返回单次金额', () => {
+    expect(averageAnnualAmount(item({ amount: 200_000, period: 'once' }))).toBe(200_000)
+  })
+})
+
+describe('occurrenceYears', () => {
+  it('年周期只返回触发年，且与旧 carYears(30, 90, 10) 口径一致', () => {
+    const car = item({ period: 'year', interval: 10, startAge: 40, endAge: 90 })
     expect(occurrenceYears(car, 30, 90)).toEqual([40, 50, 60, 70, 80, 90])
     expect(occurrenceYears(car, 30, 39)).toEqual([])
     // 区间起点晚于首次触发时，只返回落在区间内的年份
     expect(occurrenceYears(car, 55, 90)).toEqual([60, 70, 80, 90])
   })
 
-  it('cycle = 0 时 occurrenceYears 最多返回一个年龄', () => {
-    expect(occurrenceYears(item({ startAge: 60, cycle: 0 }), 30, 90)).toEqual([60])
-    expect(occurrenceYears(item({ startAge: 60, cycle: 0 }), 30, 59)).toEqual([])
+  it('month 周期在区间内每年都会返回', () => {
+    const monthly = item({ period: 'month', interval: 1, startAge: 30, endAge: 33 })
+    expect(occurrenceYears(monthly, 30, 90)).toEqual([30, 31, 32, 33])
+    expect(occurrenceYears(monthly, 31, 90)).toEqual([31, 32, 33])
   })
 
-  it('周期非法（NaN / Infinity / 负数）归一为每年，不死循环', () => {
-    for (const cycle of [Number.NaN, Number.POSITIVE_INFINITY, -5, 0.4]) {
-      const bad = item({ cycle, endAge: 32 })
-      expect(occurrenceYears(bad, 30, 32)).toEqual([30, 31, 32])
-    }
+  it('once 最多返回一个年龄', () => {
+    expect(occurrenceYears(item({ period: 'once', startAge: 60 }), 30, 90)).toEqual([60])
+    expect(occurrenceYears(item({ period: 'once', startAge: 60 }), 30, 59)).toEqual([])
+  })
+
+  it('startAge 晚于区间终点 / startAge > endAge 时返回空列表', () => {
+    expect(occurrenceYears(item({ period: 'year', interval: 5, startAge: 80 }), 30, 50)).toEqual([])
+    expect(
+      occurrenceYears(item({ period: 'year', interval: 5, startAge: 80, endAge: 40 }), 30, 90),
+    ).toEqual([])
+  })
+
+  it('荒谬区间直接返回空列表，不做长循环', () => {
+    expect(occurrenceYears(item({ period: 'month', startAge: 0, endAge: 1e9 }), -1e9, 1e9)).toEqual(
+      [],
+    )
   })
 })
 
@@ -147,13 +217,13 @@ describe('simulate：单年现金流勾稽', () => {
     }
   })
 
-  it('支出按自身起始年龄复利，起始年为基准值', () => {
+  it('每月 3000 元 = 年额 36000 元，且按年复利', () => {
     const rows = simulate(
       baseline({
         startAge: 30,
         endAge: 33,
         initialPrincipal: 1_000_000,
-        expenses: [item({ amount: 3_000, frequency: 'month', growth: 0.03 })],
+        expenses: [item({ amount: 3_000, period: 'month', interval: 1, growth: 0.03 })],
       }),
     )
     expect(rows[0].expenseTotal).toBeCloseTo(36_000, 6)
@@ -163,6 +233,37 @@ describe('simulate：单年现金流勾稽', () => {
     expect(rows[2].expenses).toEqual([rows[2].expenseTotal])
   })
 
+  it('每两个月 3000 元 = 年额 18000 元', () => {
+    const rows = simulate(
+      baseline({
+        startAge: 30,
+        endAge: 31,
+        initialPrincipal: 1_000_000,
+        expenses: [item({ amount: 3_000, period: 'month', interval: 2 })],
+      }),
+    )
+    expect(rows[0].expenseTotal).toBeCloseTo(18_000, 6)
+    expect(rows[1].expenseTotal).toBeCloseTo(18_000, 6)
+  })
+
+  it('每 10 年一次：只在触发年计入，金额按间隔年数复利', () => {
+    const rows = simulate(
+      baseline({
+        startAge: 30,
+        endAge: 61,
+        initialPrincipal: 10_000_000,
+        expenses: [item({ amount: 75_000, period: 'year', interval: 10, growth: 0.01, startAge: 40 })],
+      }),
+    )
+    const byAge = new Map(rows.map((r) => [r.age, r]))
+    expect(byAge.get(39)!.expenseTotal).toBe(0)
+    expect(byAge.get(40)!.expenseTotal).toBeCloseTo(75_000, 6)
+    expect(byAge.get(41)!.expenseTotal).toBe(0)
+    // 每 10 年一次 → 累计 10 年涨幅
+    expect(byAge.get(50)!.expenseTotal).toBeCloseTo(75_000 * 1.01 ** 10, 6)
+    expect(byAge.get(60)!.expenseTotal).toBeCloseTo(75_000 * 1.01 ** 20, 6)
+  })
+
   it('年末本金 = 年初 + 投资收益 + 收入合计 − 支出合计', () => {
     const rows = simulate(
       baseline({
@@ -170,8 +271,8 @@ describe('simulate：单年现金流勾稽', () => {
         endAge: 40,
         initialPrincipal: 200_000,
         annualReturn: 0.05,
-        incomes: [item({ name: '工资', amount: 5_000, frequency: 'month' })],
-        expenses: [item({ name: '生活费', amount: 3_000, frequency: 'month', growth: 0.03 })],
+        incomes: [item({ name: '工资', amount: 5_000, period: 'month', interval: 1 })],
+        expenses: [item({ name: '生活费', amount: 3_000, period: 'month', interval: 1, growth: 0.03 })],
       }),
     )
     for (const row of rows) {
@@ -196,8 +297,8 @@ describe('simulate：边界与开关', () => {
         startAge: 30,
         endAge: 40,
         incomes: [
-          item({ name: '工资', amount: 1_000, frequency: 'month', startAge: 30, endAge: 35 }),
-          item({ name: '零工', amount: 500, frequency: 'month', startAge: 36, endAge: 37 }),
+          item({ name: '工资', amount: 1_000, period: 'month', interval: 1, startAge: 30, endAge: 35 }),
+          item({ name: '零工', amount: 500, period: 'month', interval: 1, startAge: 36, endAge: 37 }),
         ],
       }),
     )
@@ -210,7 +311,7 @@ describe('simulate：边界与开关', () => {
     expect(byAge.get(38)!.incomes[1]).toBe(0)
   })
 
-  it('同一年多个「仅一次」支出累加，非触发年为 0', () => {
+  it('同一年多个「仅一次」支出累加，非发生年为 0', () => {
     const rows = simulate(
       baseline({
         startAge: 30,
@@ -218,9 +319,9 @@ describe('simulate：边界与开关', () => {
         // 留足缓冲，否则第一次支出就会直接资不抵债而截断
         initialPrincipal: 1_000,
         expenses: [
-          item({ name: '大病', amount: 100, cycle: 0, startAge: 32 }),
-          item({ name: '意外', amount: 200, cycle: 0, startAge: 32 }),
-          item({ name: '修房', amount: 50, cycle: 0, startAge: 33 }),
+          item({ name: '大病', amount: 100, period: 'once', startAge: 32 }),
+          item({ name: '意外', amount: 200, period: 'once', startAge: 32 }),
+          item({ name: '修房', amount: 50, period: 'once', startAge: 33 }),
         ],
       }),
     )
@@ -237,15 +338,15 @@ describe('simulate：边界与开关', () => {
         startAge: 30,
         endAge: 32,
         expenses: [
-          item({ name: '启用', amount: 1_000, enabled: true }),
-          item({ name: '停用', amount: 999_999, enabled: false }),
+          item({ name: '启用', amount: 1_000, period: 'month', interval: 1, enabled: true }),
+          item({ name: '停用', amount: 999_999, period: 'month', interval: 1, enabled: false }),
         ],
       }),
     )
     for (const row of rows) {
-      expect(row.expenses[0]).toBe(1_000)
+      expect(row.expenses[0]).toBe(12_000)
       expect(row.expenses[1]).toBe(0)
-      expect(row.expenseTotal).toBe(1_000)
+      expect(row.expenseTotal).toBe(12_000)
     }
   })
 
@@ -256,7 +357,7 @@ describe('simulate：边界与开关', () => {
         endAge: 72,
         initialPrincipal: 1_000_000,
         expenses: [
-          item({ name: '老年医疗', amount: 2_000, frequency: 'month', growth: 0.03, startAge: 70 }),
+          item({ name: '老年医疗', amount: 2_000, period: 'month', interval: 1, growth: 0.03, startAge: 70 }),
         ],
       }),
     )
@@ -264,24 +365,6 @@ describe('simulate：边界与开关', () => {
     expect(byAge.get(69)!.expenseTotal).toBe(0)
     expect(byAge.get(70)!.expenseTotal).toBeCloseTo(24_000, 6)
     expect(byAge.get(71)!.expenseTotal).toBeCloseTo(24_000 * 1.03, 6)
-  })
-
-  it('周期支出只在触发年发生，金额按间隔年数复利', () => {
-    const rows = simulate(
-      baseline({
-        startAge: 30,
-        endAge: 61,
-        initialPrincipal: 10_000_000,
-        expenses: [item({ name: '换车', amount: 75_000, growth: 0.01, cycle: 10, startAge: 40 })],
-      }),
-    )
-    const byAge = new Map(rows.map((r) => [r.age, r]))
-    expect(byAge.get(39)!.expenseTotal).toBe(0)
-    expect(byAge.get(40)!.expenseTotal).toBeCloseTo(75_000, 6)
-    expect(byAge.get(41)!.expenseTotal).toBe(0)
-    // 每 10 年一次 → 累计 10 年涨幅
-    expect(byAge.get(50)!.expenseTotal).toBeCloseTo(75_000 * 1.01 ** 10, 6)
-    expect(byAge.get(60)!.expenseTotal).toBeCloseTo(75_000 * 1.01 ** 20, 6)
   })
 })
 
@@ -351,9 +434,11 @@ describe('回归：默认参数与旧专用模型逐年等价', () => {
 
   it('换车模板在触发年的净支出等于旧口径「车价 × 1.01^n × 75%」', () => {
     const car = DEFAULT_PARAMS.expenses.find((e) => e.name === '换车')!
+    expect(car.period).toBe('year')
+    expect(car.interval).toBe(10)
     // 首次换车在 40 岁：车价已在模板里按 1.01^10 预先折算过
-    expect(amountAt(car, 40)).toBeCloseTo(OLD_CAR_PRICE * 1.01 ** 10 * 0.75, 6)
-    expect(amountAt(car, 90)).toBeCloseTo(OLD_CAR_PRICE * 1.01 ** 60 * 0.75, 6)
+    expect(perOccurrenceAmount(car, 40)).toBeCloseTo(OLD_CAR_PRICE * 1.01 ** 10 * 0.75, 6)
+    expect(perOccurrenceAmount(car, 90)).toBeCloseTo(OLD_CAR_PRICE * 1.01 ** 60 * 0.75, 6)
     expect(occurrenceYears(car, 30, 90)).toEqual([40, 50, 60, 70, 80, 90])
   })
 
@@ -374,6 +459,19 @@ describe('回归：默认参数与旧专用模型逐年等价', () => {
       expect(created.endAge).toBeGreaterThanOrEqual(created.startAge)
       expect(created.endAge).toBeLessThanOrEqual(45)
     }
+  })
+
+  it('createItem 的周期符合预设说明', () => {
+    const salary = createItem('salary', 30, 90)
+    expect([salary.period, salary.interval]).toEqual(['month', 1])
+
+    const car = createItem('car', 30, 90)
+    expect([car.period, car.interval]).toEqual(['year', 10])
+    expect(car.startAge).toBe(40)
+
+    const oneoff = createItem('oneoff', 30, 90)
+    expect([oneoff.period, oneoff.interval]).toEqual(['once', 1])
+    expect(oneoff.startAge).toBe(60)
   })
 })
 
@@ -427,10 +525,12 @@ describe('analyze', () => {
       endAge: 90,
       initialPrincipal: 500_000,
       annualReturn: 0.08,
-      incomes: [item({ name: '工资', amount: 20_000, frequency: 'month', growth: 0.05, endAge: 50 })],
+      incomes: [
+        item({ name: '工资', amount: 20_000, period: 'month', interval: 1, growth: 0.05, endAge: 50 }),
+      ],
       expenses: [
-        item({ name: '生活费', amount: 1_000, frequency: 'month' }),
-        item({ name: '大病', amount: 2_000_000, cycle: 0, startAge: 33 }),
+        item({ name: '生活费', amount: 1_000, period: 'month', interval: 1 }),
+        item({ name: '大病', amount: 2_000_000, period: 'once', startAge: 33 }),
       ],
     })
     const rows = simulate(params)
@@ -452,7 +552,7 @@ describe('analyze', () => {
       startAge: 30,
       endAge: 90,
       initialPrincipal: 100,
-      expenses: [item({ name: '生活费', amount: 60, frequency: 'year' })],
+      expenses: [item({ name: '生活费', amount: 60, period: 'year', interval: 1 })],
     })
     const rows = simulate(params)
     const a = analyze(rows, params)
@@ -509,8 +609,10 @@ describe('monteCarlo', () => {
       endAge: 90,
       initialPrincipal: 500_000,
       annualReturn: 0.08,
-      incomes: [item({ name: '工资', amount: 3_000, frequency: 'month', growth: 0.03, endAge: 50 })],
-      expenses: [item({ name: '生活费', amount: 6_000, frequency: 'month', growth: 0.03 })],
+      incomes: [
+        item({ name: '工资', amount: 3_000, period: 'month', interval: 1, growth: 0.03, endAge: 50 }),
+      ],
+      expenses: [item({ name: '生活费', amount: 6_000, period: 'month', interval: 1, growth: 0.03 })],
     })
     const mc = runMc(params, 300, 0.12, 0.02)
 
@@ -528,7 +630,7 @@ describe('monteCarlo', () => {
       endAge: 90,
       initialPrincipal: 5_000_000,
       annualReturn: 0.08,
-      expenses: [item({ name: '生活费', amount: 1_000, frequency: 'month', growth: 0.03 })],
+      expenses: [item({ name: '生活费', amount: 1_000, period: 'month', interval: 1, growth: 0.03 })],
     })
     const mc = runMc(params, 200, 0.02, 0.01)
     expect(mc.successRate).toBe(1)
@@ -550,7 +652,7 @@ describe('monteCarlo', () => {
       endAge: 90,
       initialPrincipal: 0,
       annualReturn: 0.05,
-      incomes: [item({ name: '工资', amount: 5_000, frequency: 'month', growth: 0.03 })],
+      incomes: [item({ name: '工资', amount: 5_000, period: 'month', interval: 1, growth: 0.03 })],
     })
     const deterministic = analyze(simulate(params), params).finalBalance
     const mc = runMc(params, 100, 0, 0.05)
@@ -565,12 +667,31 @@ describe('monteCarlo', () => {
       endAge: 90,
       initialPrincipal: 8_000_000,
       annualReturn: 0.05,
-      expenses: [item({ name: '生活费', amount: 6_000, frequency: 'month', growth: 0.03 })],
+      expenses: [item({ name: '生活费', amount: 6_000, period: 'month', interval: 1, growth: 0.03 })],
     })
     const tight = runMc(params, 400, 0, 0.005)
     const wide = runMc(params, 400, 0, 0.05)
 
     expect(wide.p95Final - wide.p5Final).toBeGreaterThan(tight.p95Final - tight.p5Final)
+  })
+
+  it('月周期支出（每 2 个月）的确定性终值是一半年额的量级', () => {
+    const monthly = baseline({
+      startAge: 30,
+      endAge: 31,
+      initialPrincipal: 1_000_000,
+      expenses: [item({ amount: 3_000, period: 'month', interval: 1 })],
+    })
+    const bimonthly = baseline({
+      startAge: 30,
+      endAge: 31,
+      initialPrincipal: 1_000_000,
+      expenses: [item({ amount: 3_000, period: 'month', interval: 2 })],
+    })
+    const mcMonthly = runMc(monthly, 100, 0, 0)
+    const mcBimonthly = runMc(bimonthly, 100, 0, 0)
+    expect(mcBimonthly.p50Final).toBeCloseTo(1_000_000 - 18_000 * 2, 6)
+    expect(mcMonthly.p50Final).toBeCloseTo(1_000_000 - 36_000 * 2, 6)
   })
 })
 
@@ -584,7 +705,7 @@ describe('verdict：三档结论', () => {
   /** 生活费压到 1500 元/月：普通与悲观都能躺平 */
   const thrifty: Partial<SimParams> = {
     expenses: [
-      item({ name: '生活费', amount: 1_500, frequency: 'month', growth: 0.03 }),
+      item({ name: '生活费', amount: 1_500, period: 'month', interval: 1, growth: 0.03 }),
       ...DEFAULT_PARAMS.expenses.filter((e) => e.name === '换车'),
     ],
   }
@@ -608,10 +729,12 @@ describe('verdict：三档结论', () => {
   // 资不抵债即截断，因此「普通情景会破产」只有一种形态：结束年龄前耗尽资产
   it('普通情景前耗尽资产 → bankrupt', () => {
     const neutral = analysisFor({
-      incomes: [item({ name: '工资', amount: 20_000, frequency: 'month', growth: 0.05, endAge: 50 })],
+      incomes: [
+        item({ name: '工资', amount: 20_000, period: 'month', interval: 1, growth: 0.05, endAge: 50 }),
+      ],
       expenses: [
-        item({ name: '生活费', amount: 1_000, frequency: 'month' }),
-        item({ name: '大病', amount: 2_000_000, cycle: 0, startAge: 33 }),
+        item({ name: '生活费', amount: 1_000, period: 'month', interval: 1 }),
+        item({ name: '大病', amount: 2_000_000, period: 'once', startAge: 33 }),
       ],
     })
     expect(neutral.firstNegativeAge).toBe(33)
@@ -621,7 +744,7 @@ describe('verdict：三档结论', () => {
 
   it('普通情景只要破产就一定不是 safe / risky', () => {
     const neutral = analysisFor({
-      expenses: [item({ name: '生活费', amount: 5_000, frequency: 'month', growth: 0.03 })],
+      expenses: [item({ name: '生活费', amount: 5_000, period: 'month', interval: 1, growth: 0.03 })],
     })
     expect(neutral.survives).toBe(false)
     expect(verdict(neutral, analysisFor())).toBe('bankrupt')
@@ -634,20 +757,5 @@ describe('simulateScenario', () => {
     const final = (rate: number) => analyze(simulateScenario(params, rate), params).finalBalance
     expect(final(0.04)).toBeLessThan(final(0.08))
     expect(final(0.08)).toBeLessThan(final(0.1))
-  })
-})
-
-describe('occurrenceYears：迭代边界', () => {
-  it('startAge 远早于区间起点时只返回区间内的触发年', () => {
-    const early = item({ startAge: 0, cycle: 7, endAge: 90 })
-    expect(occurrenceYears(early, 60, 75)).toEqual([63, 70])
-  })
-
-  it('startAge 晚于区间终点时返回空列表', () => {
-    expect(occurrenceYears(item({ startAge: 80, cycle: 5 }), 30, 50)).toEqual([])
-  })
-
-  it('项内 startAge > endAge 时返回空列表', () => {
-    expect(occurrenceYears(item({ startAge: 80, endAge: 40, cycle: 5 }), 30, 90)).toEqual([])
   })
 })

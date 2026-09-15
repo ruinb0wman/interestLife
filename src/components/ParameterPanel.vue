@@ -83,7 +83,8 @@ function resetList(type: 'income' | 'expense') {
     <div class="card param-card">
       <div class="card-title">收入项</div>
       <p class="card-hint">
-        涨幅按各项自身起始年龄复利；周期「每 N 年一次」的首次触发在开始年龄。填了「元/月」的项会自动 ×12 折算成年额
+        金额是「每次多少」，周期是「多久一次」：仅一次 / 每 N 个月 / 每 N 年。
+        单次金额按各项自身起始年龄逐年复利；「每 N 年」的首次发生在开始年龄
       </p>
       <div v-if="model.incomes.length === 0" class="empty-hint">未设置任何收入（默认参数为「工资」）</div>
       <div class="item-list">
@@ -118,7 +119,8 @@ function resetList(type: 'income' | 'expense') {
     <div class="card param-card">
       <div class="card-title">支出项</div>
       <p class="card-hint">
-        「仅一次」用于大病 / 意外这类单点支出；换车模板已按 25% 旧车残值预折算成净支出
+        「仅一次」用于大病 / 意外这类单点支出；「每 N 个月 / 每 N 年」用于周期性支出。
+        换车模板已按 25% 旧车残值预折算成单次净支出
       </p>
       <div v-if="model.expenses.length === 0" class="empty-hint">未设置任何支出（默认参数为「生活费 + 换车」）</div>
       <div class="item-list">

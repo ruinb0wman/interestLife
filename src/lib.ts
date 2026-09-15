@@ -1,23 +1,29 @@
 // 躺平财务模拟器 · 核心计算公式
 //
 // 通用收支模型：从「开始年龄」递推到「结束年龄」，收入与支出都是一组通用项
-// （CashFlowItem）。每个项自带金额、频率、周期、涨幅与起止年龄，引擎不再感知
-// 「工资 / 生活费 / 换车 / 医疗」这类专用分类——它们只是 Dashboard 里的预设模板。
+// （CashFlowItem）。引擎不感知「工资 / 生活费 / 换车 / 医疗」这类专用分类——
+// 它们只是 Dashboard 里的预设模板。
 //
 // 每年递推顺序（严格）：
 //   1. 年初本金产生投资收益：investmentIncome = 年初本金 × 该情景年化收益率
-//   2. 累加当年所有「触发」的收入项
-//   3. 累减当年所有「触发」的支出项
+//   2. 累加当年所有收入项的金额
+//   3. 累减当年所有支出项的金额
 //  → 年末本金 = 年初本金 + 投资收益 + 收入合计 − 支出合计
 //
-// 项在某年是否触发：
-//   item.enabled 且 item.startAge <= age <= item.endAge，且
-//     cycle === 0 → 仅 item.startAge 那年（一次性支出，如大病）
-//     cycle >= 1 → (age − item.startAge) % cycle === 0（1 = 每年）
+// 每个收支项由「单次金额 + 周期」描述：
+//   amount       每次发生的金额（元/次）
+//   period       'once' 仅一次 | 'month' 每 interval 个月 | 'year' 每 interval 年
+//   interval     周期间隔，>= 1（period='once' 时无意义，固定 1）
+//   例：period='month' interval=1  → 每月（每年 12 次）
+//       period='month' interval=2  → 每两个月（每年 6 次）
+//       period='year'  interval=10 → 每 10 年一次
+//       period='once'              → 只在 startAge 那年一次
 //
-// 项金额按其自身起始年龄复利：
-//   年额 = item.amount × (frequency === 'month' ? 12 : 1) × (1 + item.growth)^(age − item.startAge)
-//   例：换车每 10 年一次、车价年涨 1%，则首次换车（startAge + 10）时金额 = 基准额 × 1.01^10。
+// 某年的金额 = 单次金额 × 当年发生次数：
+//   单次金额(item, age) = amount × (1 + growth) ^ (age − startAge)
+//   发生次数(item, age) = 区间内该年落下的第 k 次（自 startAge 起算）个数
+// 涨幅按年复利、作用于「单次金额」，起始年系数为 1。
+// 例：每月 3000 元、年涨 3% → 第 n 年每次 3000×1.03^n，当年合计 36000×1.03^n。
 //
 // 复利与周期触发的顺序均体现在下方 simulate() 中。
 // monteCarlo() 为压力测试：收益率与「各支出项的涨幅」逐年随机游走（收入涨幅固定）。
@@ -35,8 +41,10 @@ export const DEFAULT_CAR_PRICE = 100_000
 /** 旧车残值 = 当前车价 × 25%；换车模板据此把「净支出」预折算成 75% 车价 */
 export const CAR_RESIDUAL_RATIO = 0.25
 
-/** 金额单位：每月 / 每年 */
-export type Frequency = 'month' | 'year'
+/** 周期的计量单位 */
+export type PeriodUnit = 'month' | 'year'
+/** 发生方式：仅一次 / 每 interval 个月 / 每 interval 年 */
+export type Period = 'once' | PeriodUnit
 
 /** 通用收支项（收入与支出共用同一结构，由所在的列表决定方向） */
 export interface CashFlowItem {
@@ -44,15 +52,15 @@ export interface CashFlowItem {
   id: string
   /** 展示名称，如「工资」「换车」 */
   name: string
-  /** 金额：frequency='month' 时为元/月，'year' 时为元/年 */
+  /** 单次发生金额（元/次） */
   amount: number
-  /** 金额单位 */
-  frequency: Frequency
-  /** 周期：>=1 = 每 N 年触发一次（1 = 每年）；0 = 仅发生一次（startAge 那年） */
-  cycle: number
-  /** 年涨幅（小数，如 3% 填 0.03） */
+  /** 周期：once = 仅一次；month = 每 interval 个月；year = 每 interval 年 */
+  period: Period
+  /** 周期间隔，每 interval 个 period 发生一次（period='once' 时固定为 1） */
+  interval: number
+  /** 单次金额的年涨幅（小数，如 3% 填 0.03） */
   growth: number
-  /** 开始年龄（首次触发年龄） */
+  /** 开始年龄（首次发生年龄） */
   startAge: number
   /** 结束年龄（含） */
   endAge: number
@@ -89,9 +97,9 @@ export interface YearRow {
   startPrincipal: number
   /** 投资收益 = 年初本金 × 年化收益率 */
   investmentIncome: number
-  /** 各收入项当年金额，与 params.incomes 同序（未触发为 0） */
+  /** 各收入项当年金额，与 params.incomes 同序（当年未发生为 0） */
   incomes: number[]
-  /** 各支出项当年金额，与 params.expenses 同序（未触发为 0） */
+  /** 各支出项当年金额，与 params.expenses 同序（当年未发生为 0） */
   expenses: number[]
   /** 收入合计 */
   incomeTotal: number
@@ -164,28 +172,62 @@ export const DEFAULT_MC_CONFIG: McConfig = {
   inflationVolatility: 0.01,
 }
 
-/** 金额系数：每月金额按 12 个月折算成年额 */
-export function annualAmount(item: CashFlowItem): number {
-  return item.amount * (item.frequency === 'month' ? 12 : 1)
+/** 周期非法值归一到「每 1 个单位」，避免取模炸开或死循环 */
+function toInterval(interval: number): number {
+  if (!Number.isFinite(interval)) return 1
+  return Math.max(1, Math.round(interval))
 }
 
-/** 项在某年是否触发（已含 enabled 与区间判断） */
+/** 该项在某年发生几次（已含 enabled 与区间判断） */
+export function occurrencesInYear(item: CashFlowItem, age: number): number {
+  if (!item.enabled) return 0
+  if (age < item.startAge || age > item.endAge) return 0
+
+  const elapsed = age - item.startAge
+  if (item.period === 'once') return elapsed === 0 ? 1 : 0
+
+  const interval = toInterval(item.interval)
+  if (item.period === 'year') return elapsed % interval === 0 ? 1 : 0
+
+  // 月周期：数一数本年这 12 个月里落了几次（第 k 次发生在自 startAge 起 k*interval 个月）
+  const fromMonth = elapsed * 12
+  const firstIndex = Math.ceil(fromMonth / interval)
+  const lastIndex = Math.ceil((fromMonth + 12) / interval) - 1
+  return Math.max(0, lastIndex - firstIndex + 1)
+}
+
+/** 项在某年是否会发生（至少一次） */
 export function occursAt(item: CashFlowItem, age: number): boolean {
-  if (!item.enabled) return false
-  if (age < item.startAge || age > item.endAge) return false
-  if (item.cycle === 0) return age === item.startAge
-  return (age - item.startAge) % toCycle(item.cycle) === 0
+  return occurrencesInYear(item, age) > 0
 }
 
-/** 周期非法值归一到每 1 年，避免取模炸开或死循环 */
-function toCycle(cycle: number): number {
-  if (!Number.isFinite(cycle)) return 1
-  return Math.max(1, Math.round(cycle))
+/** 单次金额（已含从 startAge 起的年复利） */
+export function perOccurrenceAmount(item: CashFlowItem, age: number): number {
+  return item.amount * Math.pow(1 + item.growth, age - item.startAge)
 }
 
 /**
- * 项在 [rangeStart, rangeEnd] 区间内的触发年龄列表（不看过 enabled，供 UI 备注用）。
- * cycle === 0 时最多返回一个年龄。
+ * 该项摊到每年的平均金额（展示用，与 simulate 的逐年结果可能有微小差异：
+ * 月周期且 interval 不整除 12 时，各年次数本来就不均匀）。
+ * period='once' 时返回单次金额——一次性项没有「年额」概念，调用方需自行区分文案。
+ */
+export function averageAnnualAmount(item: CashFlowItem): number {
+  if (item.period === 'once') return item.amount
+  const interval = toInterval(item.interval)
+  return item.period === 'month' ? (item.amount * 12) / interval : item.amount / interval
+}
+
+/** 月周期在 interval 确定时「每年大约发生几次」 */
+export function monthlyOccurrencesPerYear(interval: number): number {
+  return 12 / toInterval(interval)
+}
+
+/** 区间上限：本函数是导出 API，防御未夹紧的荒谬区间导致长循环 */
+const MAX_OCCURRENCE_SPAN = 1000
+
+/**
+ * 项在 [rangeStart, rangeEnd] 区间内「至少发生一次」的年龄列表（不看 enabled，供 UI 备注用）。
+ * 月周期通常每年都会返回；年周期只返回触发年。
  */
 export function occurrenceYears(
   item: CashFlowItem,
@@ -193,26 +235,15 @@ export function occurrenceYears(
   rangeEnd: number,
 ): number[] {
   const years: number[] = []
-  const last = Math.min(item.endAge, rangeEnd)
+  const from = Math.max(item.startAge, rangeStart)
+  const to = Math.min(item.endAge, rangeEnd)
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return years
+  if (to < from || to - from > MAX_OCCURRENCE_SPAN) return years
 
-  if (item.cycle === 0) {
-    if (item.startAge >= rangeStart && item.startAge <= rangeEnd) years.push(item.startAge)
-    return years
+  for (let age = from; age <= to; age++) {
+    if (occurrencesInYear(item, age) > 0) years.push(age)
   }
-
-  const cycle = toCycle(item.cycle)
-  // 直接算出区间内的第一个触发年，避免 item.startAge 远早于 rangeStart 时
-  // 从 startAge 一路空转（本函数是导出 API，不能假设输入已被 persist 夹紧）
-  const gap = rangeStart - item.startAge
-  const first = gap <= 0 ? item.startAge : item.startAge + Math.ceil(gap / cycle) * cycle
-
-  for (let age = first; age <= last; age += cycle) years.push(age)
   return years
-}
-
-/** 项在指定年龄的金额（已含月→年折算与从 startAge 起的复利） */
-export function amountAt(item: CashFlowItem, age: number): number {
-  return annualAmount(item) * Math.pow(1 + item.growth, age - item.startAge)
 }
 
 /** 深拷贝收支项列表（避免默认值与 UI 状态共享同一份对象） */
@@ -246,13 +277,13 @@ export interface CashFlowPreset {
 }
 
 export const CASHFLOW_PRESETS: CashFlowPreset[] = [
-  { key: 'salary', label: '工资', type: 'income', hint: '每月 3000 元，涨幅 3%，发到 50 岁' },
-  { key: 'gig', label: '零工', type: 'income', hint: '每月 2000 元，涨幅 3%，50 岁后开始' },
+  { key: 'salary', label: '工资', type: 'income', hint: '每月 3000 元，年涨 3%，发到 50 岁' },
+  { key: 'gig', label: '零工', type: 'income', hint: '每月 2000 元，年涨 3%，50 岁起' },
   { key: 'blank-income', label: '空白项', type: 'income', hint: '从零自己填写' },
-  { key: 'living', label: '生活费', type: 'expense', hint: '每月 3000 元，涨幅 3%' },
-  { key: 'car', label: '换车', type: 'expense', hint: '每 10 年一次，净支出按首次换车年车价（含 25% 残值）' },
-  { key: 'medical', label: '老年医疗', type: 'expense', hint: '70 岁起每月 2000 元，涨幅 3%' },
-  { key: 'oneoff', label: '大病/意外', type: 'expense', hint: '60 岁一次性支出 20 万' },
+  { key: 'living', label: '生活费', type: 'expense', hint: '每月 3000 元，年涨 3%' },
+  { key: 'car', label: '换车', type: 'expense', hint: '每 10 年一次，单次净支出含 25% 残值' },
+  { key: 'medical', label: '老年医疗', type: 'expense', hint: '70 岁起每月 2000 元，年涨 3%' },
+  { key: 'oneoff', label: '大病/意外', type: 'expense', hint: '仅一次：60 岁支出 20 万' },
   { key: 'blank-expense', label: '空白项', type: 'expense', hint: '从零自己填写' },
 ]
 
@@ -265,8 +296,8 @@ export function createItem(presetKey: string, startAge: number, endAge: number):
   const base = {
     id: createItemId(),
     amount: 0,
-    frequency: 'year' as Frequency,
-    cycle: 1,
+    period: 'month' as Period,
+    interval: 1,
     growth: 0,
     startAge: lo,
     endAge: hi,
@@ -275,24 +306,16 @@ export function createItem(presetKey: string, startAge: number, endAge: number):
 
   switch (presetKey) {
     case 'salary':
-      return { ...base, name: '工资', amount: 3000, frequency: 'month', growth: 0.03, endAge: at(lo + 20) }
+      return { ...base, name: '工资', amount: 3000, growth: 0.03, endAge: at(lo + 20) }
     case 'gig':
-      return {
-        ...base,
-        name: '零工',
-        amount: 2000,
-        frequency: 'month',
-        growth: 0.03,
-        startAge: at(lo + 20),
-        endAge: hi,
-      }
+      return { ...base, name: '零工', amount: 2000, growth: 0.03, startAge: at(lo + 20), endAge: hi }
     case 'living':
-      return { ...base, name: '生活费', amount: 3000, frequency: 'month', growth: 0.03 }
+      return { ...base, name: '生活费', amount: 3000, growth: 0.03 }
     case 'car': {
       // 与旧模型等价：车价从「全局开始年龄」起按 1% 复利，首次换车在 lo + 10。
-      // 通用项的涨幅只从自身 startAge 起算，因此把首次换车那年的价格预先折算进金额：
+      // 单次金额是「首次换车那年」的净支出，之后每 10 年再按 growth 复利一次：
       //   amount = 车价 × (1 − 残值率) × (1 + 涨幅)^(首次换车年龄 − 全局开始年龄)
-      // 这样触发年的净支出与旧的 initialCarPrice × (1 + g)^(age − startAge) × 75% 逐年一致。
+      // 于是触发年的净支出与旧的 initialCarPrice × (1 + g)^(age − startAge) × 75% 逐年一致。
       const carGrowth = 0.01
       const firstCarAge = at(lo + 10)
       return {
@@ -302,8 +325,8 @@ export function createItem(presetKey: string, startAge: number, endAge: number):
           DEFAULT_CAR_PRICE *
           (1 - CAR_RESIDUAL_RATIO) *
           Math.pow(1 + carGrowth, firstCarAge - lo),
-        frequency: 'year',
-        cycle: 10,
+        period: 'year',
+        interval: 10,
         growth: carGrowth,
         startAge: firstCarAge,
         endAge: hi,
@@ -314,7 +337,6 @@ export function createItem(presetKey: string, startAge: number, endAge: number):
         ...base,
         name: '老年医疗',
         amount: 2000,
-        frequency: 'month',
         growth: 0.03,
         startAge: at(70),
         endAge: hi,
@@ -324,9 +346,8 @@ export function createItem(presetKey: string, startAge: number, endAge: number):
         ...base,
         name: '大病/意外',
         amount: 200_000,
-        frequency: 'year',
-        // 0 = 仅发生一次
-        cycle: 0,
+        period: 'once',
+        interval: 1,
         growth: 0,
         startAge: at(60),
         endAge: hi,
@@ -358,10 +379,7 @@ function sum(values: number[]): number {
   return total
 }
 
-/**
- * 计算单个年度的收支明细（纯函数，供 simulate / simulateScenario / monteCarlo 复用）。
- * `factors` 传入时（蒙特卡洛通胀随机游走）用它替换各项的复利系数。
- */
+/** 计算单个年度的收支明细（纯函数，供 simulate / simulateScenario / monteCarlo 复用） */
 function computeYear(
   age: number,
   principal: number,
@@ -387,20 +405,22 @@ function computeYear(
 }
 
 /**
- * 计算某年各项的金额（未触发为 0）。传入 factors 时按累计系数取值（MC 用），
- * 否则按 (1 + growth)^(age − startAge) 复利。
+ * 计算某年各项的金额（当年未发生为 0）。
+ * 传入 factors 时用累计系数替换「单次金额」的复利（MC 通胀随机游走用）。
  */
 function yearAmounts(items: CashFlowItem[], age: number, factors?: number[]): number[] {
   const out: number[] = new Array(items.length)
   for (let i = 0; i < items.length; i++) {
     const item = items[i]
-    if (!occursAt(item, age)) {
+    const count = occurrencesInYear(item, age)
+    if (count === 0) {
       out[i] = 0
       continue
     }
-    out[i] = factors
-      ? annualAmount(item) * factors[i]
-      : annualAmount(item) * Math.pow(1 + item.growth, age - item.startAge)
+    const per = factors
+      ? item.amount * factors[i]
+      : item.amount * Math.pow(1 + item.growth, age - item.startAge)
+    out[i] = count * per
   }
   return out
 }
@@ -524,8 +544,9 @@ function percentile(sorted: number[], p: number): number {
 
 /**
  * 蒙特卡洛压力测试：每年收益率 ~ N(普通收益率, 收益波动率)，
- * 每个「支出项」的涨幅 ~ N(该项涨幅, 通胀波动率) 逐年随机游走（收入项涨幅固定），
- * 共 iterations 次模拟，统计全程本金从未为负的成功率与最终资产分位。
+ * 每个「支出项」的单次金额涨幅 ~ N(该项涨幅, 通胀波动率) 逐年随机游走
+ * （收入项涨幅固定），共 iterations 次模拟，
+ * 统计全程本金从未为负的成功率与最终资产分位。
  *
  * 与 simulateScenario 一致，资不抵债即截断该次模拟，以耗尽当年的缺口计入最终资产，
  * 并记录耗尽年龄。
@@ -578,7 +599,7 @@ export function monteCarlo(params: SimParams, config: McConfig): McResult {
 
       principal = row.endPrincipal
 
-      // 通胀在「下一年」生效：起始年的支出系数必须是 1，否则 MC 首年就多涨一轮，
+      // 通胀在「下一年」生效：起始年的系数必须是 1，否则 MC 首年就多涨一轮，
       // 与 simulate() 的 pow(1 + growth, age - startAge) 口径不一致。
       for (let i = 0; i < expenseCount; i++) {
         if (age < params.expenses[i].startAge) continue

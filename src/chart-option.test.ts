@@ -16,8 +16,8 @@ function item(overrides: Partial<CashFlowItem> = {}): CashFlowItem {
     id: 'chart-item',
     name: '项',
     amount: 0,
-    frequency: 'year',
-    cycle: 1,
+    period: 'month',
+    interval: 1,
     growth: 0,
     startAge: 30,
     endAge: 90,
@@ -118,7 +118,7 @@ describe('buildChartOption：动态收支项系列', () => {
   it('全为 0（未触发 / 已停用）的项不占用图例与色号', () => {
     const opt = loose({
       rows: [row(30, 100, { expenses: [0, 500] })],
-      expenses: [item({ name: '停用项', enabled: false }), item({ name: '仅一次', cycle: 0 })],
+      expenses: [item({ name: '停用项', enabled: false }), item({ name: '仅一次', period: 'once' })],
     })
 
     expect(seriesNames(opt)).not.toContain('停用项')
@@ -129,7 +129,7 @@ describe('buildChartOption：动态收支项系列', () => {
     const opt = loose({
       rows: [row(30, 100, { incomes: [1], expenses: [2, 3] })],
       incomes: [item({ name: '工资' })],
-      expenses: [item({ name: '生活费' }), item({ name: '大病', cycle: 0 })],
+      expenses: [item({ name: '生活费' }), item({ name: '大病', period: 'once' })],
     })
 
     expect(seriesOf(opt, '工资').type).toBe('line')
@@ -211,7 +211,7 @@ describe('buildChartOption：图例与系列保持一致', () => {
   it('三种图表类型都被用到：line / scatter / bar', () => {
     const opt = loose({
       rows: [row(30, 100, { expenses: [1] })],
-      expenses: [item({ name: '大病', cycle: 0 })],
+      expenses: [item({ name: '大病', period: 'once' })],
     })
     expect(new Set(opt.series.map((s) => s.type))).toEqual(new Set(['line', 'scatter', 'bar']))
   })
@@ -261,7 +261,9 @@ describe('buildChartOption：与真实模拟结果联通', () => {
     // 把生活费抬到 4000 元/月：悲观 4% 先耗尽、普通 8% 随后耗尽、乐观 10% 撑到 90 岁
     const params: SimParams = {
       ...DEFAULT_PARAMS,
-      expenses: DEFAULT_PARAMS.expenses.map((e) => (e.name === '生活费' ? { ...e, amount: 4_000 } : e)),
+      expenses: DEFAULT_PARAMS.expenses.map((e) =>
+        e.name === '生活费' ? { ...e, amount: 4_000 } : e,
+      ),
     }
     const neutral = simulate(params)
     const optimistic = simulateScenario(params, params.optimisticReturn)

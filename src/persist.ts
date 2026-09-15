@@ -5,7 +5,9 @@
 // 安全边界的存在意义之一是防止 endAge 被构造成 1e9 之类导致 simulate 死循环。
 //
 // 版本策略：STATE_VERSION 变更意味着配置结构不兼容，旧链接/旧本地缓存直接作废
-// 回退默认值（见 deserializeState 的 version 检查），不提供 v1 → v2 迁移。
+// 回退默认值（见 deserializeState 的 version 检查），不提供旧版本迁移。
+// v2 → v3：周期的表示从「frequency(金额单位) + cycle(每 N 年)」
+// 改为「period(once|month|year) + interval(每 N 个单位)」，字段语义不兼容。
 
 import {
   DEFAULT_MC_CONFIG,
@@ -13,14 +15,14 @@ import {
   cloneItems,
   cloneParams,
   type CashFlowItem,
-  type Frequency,
   type McConfig,
+  type Period,
   type SimParams,
 } from './lib'
 
-export const STATE_VERSION = 2
+export const STATE_VERSION = 3
 export const HASH_KEY = 's'
-export const STORAGE_KEY = 'interestlife.state.v2'
+export const STORAGE_KEY = 'interestlife.state.v3'
 /** 每个收支项列表的条数上限（收入、支出各自计算） */
 export const MAX_CASHFLOW_ITEMS = 50
 
@@ -37,7 +39,8 @@ const AGE_MAX = 200
 const RATE_MIN = -0.99
 const RATE_MAX = 10
 const MONEY_MAX = 1e12
-const CYCLE_MAX = 200
+/** 周期间隔上限：每 1200 个月 ≈ 每 100 年，够表达任何现实排期 */
+const INTERVAL_MAX = 1200
 const NAME_MAX = 24
 const ID_MAX = 64
 
@@ -51,7 +54,7 @@ const NUMBER_LIMITS: Record<string, [number, number]> = {
 }
 
 const INTEGER_FIELDS = new Set(['startAge', 'endAge'])
-const FREQUENCIES: readonly Frequency[] = ['month', 'year']
+const PERIODS: readonly Period[] = ['once', 'month', 'year']
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
@@ -78,9 +81,7 @@ function sanitizeCashFlowItem(raw: unknown, index: number, prefix: string): Cash
     Math.round(clampNumber(entry.endAge, startAge, AGE_MIN, AGE_MAX)),
   )
 
-  const frequency = FREQUENCIES.includes(entry.frequency as Frequency)
-    ? (entry.frequency as Frequency)
-    : 'year'
+  const period = PERIODS.includes(entry.period as Period) ? (entry.period as Period) : 'month'
 
   const rawName = typeof entry.name === 'string' ? entry.name.trim().slice(0, NAME_MAX) : ''
   const rawId = typeof entry.id === 'string' ? entry.id.trim().slice(0, ID_MAX) : ''
@@ -89,9 +90,10 @@ function sanitizeCashFlowItem(raw: unknown, index: number, prefix: string): Cash
     id: rawId.length > 0 ? rawId : `${prefix}-${index}`,
     name: rawName.length > 0 ? rawName : `${label}${index + 1}`,
     amount: clampNumber(entry.amount, 0, 0, MONEY_MAX),
-    frequency,
-    // cycle === 0 是合法值（仅发生一次），因此下界为 0
-    cycle: Math.round(clampNumber(entry.cycle, 1, 0, CYCLE_MAX)),
+    period,
+    // 「仅一次」没有周期间隔的概念，强制回 1 避免留下误导性数值
+    interval:
+      period === 'once' ? 1 : Math.round(clampNumber(entry.interval, 1, 1, INTERVAL_MAX)),
     growth: clampNumber(entry.growth, 0, RATE_MIN, RATE_MAX),
     startAge,
     endAge,

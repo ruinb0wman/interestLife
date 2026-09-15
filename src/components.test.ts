@@ -106,8 +106,8 @@ describe('CashFlowItemRow', () => {
       id: 'row-item',
       name: '项',
       amount: 3_000,
-      frequency: 'month',
-      cycle: 1,
+      period: 'month',
+      interval: 1,
       growth: 0.03,
       startAge: 30,
       endAge: 35,
@@ -126,18 +126,36 @@ describe('CashFlowItemRow', () => {
       },
     })
 
-  it('每年触发的项显示触发区间与次数', () => {
-    expect(mountRow().text()).toContain('每年触发（30 ~ 35 岁，共 6 次）')
+  it('每月发生的项显示发生频率与总次数', () => {
+    // 默认 startAge 30 / endAge 35，每月 → 每年 12 次
+    const text = mountRow({ period: 'month', interval: 1 }).text()
+    expect(text).toContain('每 1 个月发生一次')
+    expect(text).toContain('每年 12 次')
+    expect(text).toContain('共约 72 次')
   })
 
-  it('周期项显示「每 N 年一次」与具体触发年份', () => {
-    const text = mountRow({ cycle: 10, startAge: 40, endAge: 90 }).text()
-    expect(text).toContain('每 10 年一次：40 / 50 / 60 / 70 / 80 / 90')
+  it('每 N 个月发生的项显示间隔与折合次数', () => {
+    const text = mountRow({ period: 'month', interval: 2, startAge: 30, endAge: 35 }).text()
+    expect(text).toContain('每 2 个月发生一次')
+    expect(text).toContain('每年 6 次')
+    expect(text).toContain('共约 36 次')
   })
 
-  it('仅一次的项显示单点触发', () => {
-    expect(mountRow({ cycle: 0, startAge: 60, endAge: 90 }).text()).toContain(
-      '仅在 60 岁触发一次，共 1 次',
+  it('年周期项列出具体发生年份', () => {
+    const text = mountRow({ period: 'year', interval: 10, startAge: 40, endAge: 90 }).text()
+    expect(text).toContain('每 10 年发生一次：40 / 50 / 60 / 70 / 80 / 90')
+    expect(text).toContain('共 6 次')
+  })
+
+  it('每 1 年的项列出全部年份', () => {
+    expect(mountRow({ period: 'year', interval: 1 }).text()).toContain(
+      '每 1 年发生一次：30 / 31 / 32 / 33 / 34 / 35',
+    )
+  })
+
+  it('仅一次的项显示单点发生', () => {
+    expect(mountRow({ period: 'once', startAge: 60, endAge: 90 }).text()).toContain(
+      '仅在 60 岁发生一次',
     )
   })
 
@@ -148,20 +166,45 @@ describe('CashFlowItemRow', () => {
   // 不静默改写用户填的年龄（避免调大再调小全局年龄后原值丢失），而是把风险说出来
   it('超出模拟区间的项给出警告而不是静默改写', async () => {
     const wrapper = mountRow({ startAge: 91, endAge: 100 })
-    expect(wrapper.text()).toContain('超出模拟区间（30~90 岁），不会触发')
-    expect(wrapper.text()).not.toContain('每年触发')
+    expect(wrapper.text()).toContain('超出模拟区间（30~90 岁），不会发生')
+    expect(wrapper.text()).not.toContain('每 1 个月发生一次')
 
-    // 改回区间内后警告消失且触发提示恢复
+    // 改回区间内后警告消失且发生提示恢复
     await wrapper.setProps({
       modelValue: makeItem({ startAge: 30, endAge: 90 }),
     })
     expect(wrapper.text()).not.toContain('超出模拟区间')
-    expect(wrapper.text()).toContain('每年触发')
+    expect(wrapper.text()).toContain('每 1 个月发生一次')
   })
 
-  it('月额项显示折算后的年额，便于核对填的是月还是年', () => {
-    expect(mountRow({ amount: 3_000, frequency: 'month' }).text()).toContain('年额约 36,000 元')
-    expect(mountRow({ amount: 3_000, frequency: 'year' }).text()).toContain('年额约 3,000 元')
+  // 周期是 element-plus 的 el-select 直连模型（不是派生值 + change 回写）
+  it('周期用 el-select 直连模型，仅一次时不显示间隔输入', async () => {
+    const wrapper = mountRow({ period: 'year', interval: 10 })
+    const select = wrapper.findComponent({ name: 'ElSelect' })
+    expect(select.exists()).toBe(true)
+    expect(select.props('modelValue')).toBe('year')
+    expect(wrapper.findAll('.interval-num')).toHaveLength(1)
+
+    await wrapper.setProps({ modelValue: makeItem({ period: 'once' }) })
+    expect(wrapper.findComponent({ name: 'ElSelect' }).props('modelValue')).toBe('once')
+    expect(wrapper.findAll('.interval-num')).toHaveLength(0)
+
+    await wrapper.setProps({ modelValue: makeItem({ period: 'month', interval: 2 }) })
+    expect(wrapper.findComponent({ name: 'ElSelect' }).props('modelValue')).toBe('month')
+    expect(wrapper.findAll('.interval-num')).toHaveLength(1)
+  })
+
+  it('金额提示：周期项摊成年额，仅一次项看单次金额', () => {
+    expect(mountRow({ amount: 3_000, period: 'month', interval: 1 }).text()).toContain(
+      '年额约 36,000 元',
+    )
+    expect(mountRow({ amount: 3_000, period: 'month', interval: 2 }).text()).toContain(
+      '年额约 18,000 元',
+    )
+    expect(mountRow({ amount: 75_000, period: 'year', interval: 10 }).text()).toContain(
+      '年额约 7,500 元',
+    )
+    expect(mountRow({ amount: 200_000, period: 'once' }).text()).toContain('单次 200,000 元')
   })
 })
 
@@ -182,10 +225,9 @@ describe('ParameterPanel', () => {
     expect(text).toContain('投资收益')
     // 默认项：工资 / 生活费 / 换车
     expect(inputValues(wrapper, '.name-input')).toEqual(['工资', '生活费', '换车'])
-    // 触发口径在提示行里可见（工资 30~50、生活费 30~90、换车每 10 年）
-    expect(text).toContain('每年触发（30 ~ 50 岁，共 21 次）')
-    expect(text).toContain('每年触发（30 ~ 90 岁，共 61 次）')
-    expect(text).toContain('每 10 年一次：40 / 50 / 60 / 70 / 80 / 90')
+    // 发生口径在提示行里可见（工资 每月、生活费 每月、换车 每 10 年）
+    expect(text).toContain('每年 12 次')
+    expect(text).toContain('每 10 年发生一次：40 / 50 / 60 / 70 / 80 / 90')
     // 三档收益率
     expect(text).toContain('普通收益率')
     expect(text).toContain('乐观收益率')
