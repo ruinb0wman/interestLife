@@ -23,9 +23,11 @@ bun install
 bun run dev      # 开发（host: true，可在局域网访问）
 bun run build    # 类型检查 + 打包
 bun run preview  # 预览构建产物
+bun run test     # 单元测试（vitest）
 ```
 
-核心计算公式独立于 `src/lib.ts`（含 `simulate` / `simulateScenario` / `monteCarlo` / `analyze`），便于审查与复用。
+核心计算公式独立于 `src/lib.ts`（含 `simulate` / `simulateScenario` / `monteCarlo` / `analyze` / `verdict`），便于审查与复用；
+回归测试见 `src/lib.test.ts`（公式与边界）与 `src/components.test.ts`（组件层）。
 
 ---
 

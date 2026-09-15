@@ -159,7 +159,7 @@ export interface Analysis {
   salaryStopAge: number
   /** 第一次换车年龄 = 初始年龄 + 买车周期 */
   firstCarAge: number
-  /** 能否存活到目标年龄（目标年龄年末本金 > 0） */
+  /** 能否存活到目标年龄：全程任何一年年末本金都未为负，且目标年龄年末本金为正 */
   survives: boolean
   /** 全程最低本金（取各年年末本金最小值） */
   minBalance: number
@@ -191,6 +191,10 @@ export interface McResult {
 
 /** 换车年份列表：初始年龄 + 周期，每周期一次，直到目标年龄 */
 export function carYears(startAge: number, targetAge: number, interval: number): number[] {
+  // 周期非法时返回空列表：本函数对外导出、可被复用，
+  // 若 interval <= 0 则 for 循环无法推进（死循环）
+  if (!Number.isFinite(interval) || interval <= 0) return []
+
   const years: number[] = []
   for (let age = startAge + interval; age <= targetAge; age += interval) {
     years.push(age)
@@ -315,7 +319,7 @@ export function analyze(rows: YearRow[], params: SimParams): Analysis {
     targetAge,
     salaryStopAge: params.salaryStopAge,
     firstCarAge,
-    survives: finalBalance > 0,
+    survives: firstNegativeAge === -1 && finalBalance > 0,
     minBalance,
     minBalanceAge,
     firstNegativeAge,
@@ -323,6 +327,21 @@ export function analyze(rows: YearRow[], params: SimParams): Analysis {
     afterFirstCar,
     afterSalaryStop,
   }
+}
+
+/** 结论判定：把「中性 / 悲观」两组分析归纳成三档结论，供 UI 渲染横幅 */
+export type Verdict = 'safe' | 'risky' | 'bankrupt'
+
+/**
+ * safe     = 中性、悲观情景都能躺平到目标年龄（全程都未破产）
+ * risky    = 中性可以，但悲观情景会破产
+ * bankrupt = 中性情景本身就会破产
+ *
+ * 判定依据是「全程任何一年都未为负」（Analysis.survives），而不是只看目标年龄的终值。
+ */
+export function verdict(neutral: Analysis, pessimistic: Analysis): Verdict {
+  if (!neutral.survives) return 'bankrupt'
+  return pessimistic.survives ? 'safe' : 'risky'
 }
 
 function gaussian(): number {
@@ -370,11 +389,15 @@ export function monteCarlo(
 
     for (let age = params.startAge; age <= params.targetAge; age++) {
       const ret = clamp(params.annualReturn + returnVolatility * gaussian(), -0.3, 0.6)
-      const infl = clamp(params.livingGrowth + inflationVolatility * gaussian(), -0.05, 0.2)
-      livingFactor *= 1 + infl
       const row = computeYear(params, age, principal, ret, livingFactor, cars)
       if (row.endPrincipal < 0) ok = false
       principal = row.endPrincipal
+
+      // 通胀在「下一年」生效：起始年的生活费系数必须是 1，否则 MC 首年就多涨一轮，
+      // 与 simulate() 的 pow(1 + livingGrowth, age - startAge) 口径不一致
+      // （实测该偏差会让 MC 中位数比确定性结果低约 20%）。
+      const infl = clamp(params.livingGrowth + inflationVolatility * gaussian(), -0.05, 0.2)
+      livingFactor *= 1 + infl
     }
 
     finals.push(principal)

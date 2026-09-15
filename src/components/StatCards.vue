@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Analysis } from '../lib'
 import { formatPercent, formatWan, formatYuan } from '../format'
 
@@ -8,35 +9,39 @@ const props = defineProps<{
   pessimisticReturn: number
 }>()
 
-const span = () => props.analysis.targetAge - props.analysis.startAge
-
-const cards = [
-  {
-    label: `${props.analysis.targetAge} 岁总资产（中性）`,
-    value: () => props.analysis.finalBalance,
-    hint: '模拟结束时的全部身家',
-  },
-  {
-    label: `悲观情景总资产（${formatPercent(props.pessimisticReturn)}）`,
-    value: () => props.pessimisticBalance,
-    hint: '最坏情景下的剩余身家',
-  },
-  {
-    label: `${props.analysis.firstCarAge} 岁（第一次换车后）`,
-    value: () => props.analysis.afterFirstCar,
-    hint: '首次换车节点',
-  },
-  {
-    label: `${props.analysis.salaryStopAge + 1} 岁（停薪后）`,
-    value: () => props.analysis.afterSalaryStop,
-    hint: '工资停发后的节点',
-  },
-  {
-    label: '最低本金',
-    value: () => props.analysis.minBalance,
-    hint: `${props.analysis.minBalanceAge} 岁时为 ${span()} 年内最低点`,
-  },
-]
+// 必须用 computed：label / hint 依赖 props，写成普通常量只会在 setup 时求值一次，
+// 之后参数变化不会更新（例如「停薪后」卡片的年龄与最低本金年龄会一直是旧值）。
+const cards = computed(() => {
+  const a = props.analysis
+  const span = a.targetAge - a.startAge
+  return [
+    {
+      label: `${a.targetAge} 岁总资产（中性）`,
+      amount: a.finalBalance,
+      hint: '模拟结束时的全部身家',
+    },
+    {
+      label: `悲观情景总资产（${formatPercent(props.pessimisticReturn)}）`,
+      amount: props.pessimisticBalance,
+      hint: '最坏情景下的剩余身家',
+    },
+    {
+      label: `${a.firstCarAge} 岁（第一次换车后）`,
+      amount: a.afterFirstCar,
+      hint: '首次换车节点',
+    },
+    {
+      label: `${a.salaryStopAge + 1} 岁（停薪后）`,
+      amount: a.afterSalaryStop,
+      hint: '工资停发后的节点',
+    },
+    {
+      label: '最低本金',
+      amount: a.minBalance,
+      hint: `${a.minBalanceAge} 岁时为 ${span} 年内最低点`,
+    },
+  ]
+})
 </script>
 
 <template>
@@ -45,12 +50,12 @@ const cards = [
       v-for="c in cards"
       :key="c.label"
       class="stat-card"
-      :class="c.value() >= 0 ? 'positive' : 'negative'"
+      :class="c.amount >= 0 ? 'positive' : 'negative'"
     >
       <div class="stat-label">{{ c.label }}</div>
-      <div class="stat-value">{{ formatWan(c.value()) }}</div>
+      <div class="stat-value">{{ formatWan(c.amount) }}</div>
       <div class="stat-sub">
-        {{ formatYuan(c.value()) }}
+        {{ formatYuan(c.amount) }}
         <span class="stat-hint">· {{ c.hint }}</span>
       </div>
     </div>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive } from 'vue'
-import { analyze, DEFAULT_PARAMS, simulate, simulateScenario } from './lib'
+import { analyze, DEFAULT_PARAMS, simulate, simulateScenario, verdict } from './lib'
 import { formatPercent, formatWan, formatYuan } from './format'
 import ParameterPanel from './components/ParameterPanel.vue'
 import CashFlowChart from './components/CashFlowChart.vue'
@@ -18,6 +18,7 @@ const optimisticRows = computed(() => simulateScenario(params, params.optimistic
 const pessimisticRows = computed(() => simulateScenario(params, params.pessimisticReturn))
 const analysis = computed(() => analyze(rows.value, params))
 const pessimisticAnalysis = computed(() => analyze(pessimisticRows.value, params))
+const conclusion = computed(() => verdict(analysis.value, pessimisticAnalysis.value))
 </script>
 
 <template>
@@ -31,7 +32,7 @@ const pessimisticAnalysis = computed(() => analyze(pessimisticRows.value, params
     </header>
 
     <el-alert
-      v-if="pessimisticAnalysis.survives"
+      v-if="conclusion === 'safe'"
       type="success"
       :closable="false"
       show-icon
@@ -40,13 +41,14 @@ const pessimisticAnalysis = computed(() => analyze(pessimisticRows.value, params
     >
       <template #default>
         即使在悲观收益率（{{ formatPercent(params.pessimisticReturn) }}）下，
-        {{ analysis.targetAge }} 岁时仍有 {{ formatWan(pessimisticAnalysis.finalBalance) }}；
+        {{ analysis.targetAge }} 岁时仍有 {{ formatWan(pessimisticAnalysis.finalBalance) }}，
+        全程最低点 {{ formatWan(pessimisticAnalysis.minBalance) }}（{{ pessimisticAnalysis.minBalanceAge }} 岁）；
         中性情景（{{ formatPercent(params.annualReturn) }}）下为
         {{ formatWan(analysis.finalBalance) }}。
       </template>
     </el-alert>
     <el-alert
-      v-else-if="analysis.survives"
+      v-else-if="conclusion === 'risky'"
       type="warning"
       :closable="false"
       show-icon
@@ -58,10 +60,12 @@ const pessimisticAnalysis = computed(() => analyze(pessimisticRows.value, params
         <template v-if="pessimisticAnalysis.firstNegativeAge >= 0">
           <b>{{ pessimisticAnalysis.firstNegativeAge }} 岁</b>首现负数
         </template>
-        <template v-else>某一年</template>
+        <template v-else>目标年龄时耗尽</template>
         （最低 {{ formatYuan(pessimisticAnalysis.minBalance) }}）。
         中性情景（{{ formatPercent(params.annualReturn) }}）最终仍有
-        {{ formatWan(analysis.finalBalance) }}。建议压低生活费/医疗涨幅、提高本金或收益率。
+        {{ formatWan(analysis.finalBalance) }}，全程最低点 {{ formatWan(analysis.minBalance) }}
+        （{{ analysis.minBalanceAge }} 岁）。
+        建议压低生活费/医疗涨幅、提高本金或收益率。
       </template>
     </el-alert>
     <el-alert
@@ -77,7 +81,7 @@ const pessimisticAnalysis = computed(() => analyze(pessimisticRows.value, params
         <template v-if="analysis.firstNegativeAge >= 0">
           <b>{{ analysis.firstNegativeAge }} 岁</b>首现负数
         </template>
-        <template v-else>某一年</template>
+        <template v-else>目标年龄时耗尽</template>
         ，全程最低点为 {{ analysis.minBalanceAge }} 岁的 {{ formatYuan(analysis.minBalance) }}。
         试试提高本金 / 收益率，或压低生活费涨幅、停用换车/医疗支出。
       </template>
