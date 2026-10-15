@@ -19,7 +19,7 @@ import {
 
 const open = defineModel<boolean>('open', { required: true })
 const props = defineProps<{ params: SimParams; mc: McConfig }>()
-const emit = defineEmits<{ load: [snapshot: Snapshot]; change: [count: number] }>()
+const emit = defineEmits<{ load: [snapshot: Snapshot]; change: [items: Snapshot[]] }>()
 
 const items = ref<Snapshot[]>(listSnapshots())
 /** 上次写入是否成功；失败时内存里的列表不再与存储一致，不能再拿存储去覆盖它 */
@@ -27,10 +27,11 @@ const persistFailed = ref(false)
 
 // 抽屉是随 App 一起挂载的，列表只在 setup 时读一次。
 // 打开时重读：另一个标签页可能刚存过快照（写入失败时例外，否则会把内存里的条目刷掉）。
+// 这个重读结果也要 emit 给父层：App 要用整份列表判断「当前参数命中哪条快照」。
 watch(open, (isOpen) => {
   if (!isOpen || persistFailed.value) return
   items.value = listSnapshots()
-  emit('change', items.value.length)
+  emit('change', items.value)
 })
 
 interface SnapshotRow {
@@ -71,7 +72,7 @@ function commit(next: Snapshot[], okMessage?: string) {
   } else if (okMessage) {
     ElMessage.success(okMessage)
   }
-  emit('change', next.length)
+  emit('change', next)
 }
 
 async function saveCurrent() {

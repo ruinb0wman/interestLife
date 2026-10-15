@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import App from './App.vue'
@@ -10,7 +10,7 @@ import StatCards from './components/StatCards.vue'
 import SnapshotPanel from './components/SnapshotPanel.vue'
 import { formatWan } from './format'
 import { DEFAULT_MC_CONFIG } from './lib'
-import { readStateFromStorage } from './persist'
+import { readStateFromStorage, writeStateToStorage, STATE_VERSION } from './persist'
 import { createSnapshot, writeSnapshots } from './snapshots'
 import {
   analyze,
@@ -539,16 +539,14 @@ describe('App 快照', () => {
     localStorage.clear()
   })
 
-  // 快照只存参数，所以「载入」必须真的把参数换成快照里的那一套，
-  // 并走原有的持久化链路写回本地（否则刷新就回到旧参数了）。
-  it('载入快照会覆盖当前参数，并写回本地', async () => {
-    const params = cloneParams(DEFAULT_PARAMS)
-    params.initialPrincipal = 4_000_000
-    params.annualReturn = 0.1
-    writeSnapshots([createSnapshot(params, DEFAULT_MC_CONFIG, '高收益高本金')])
+  beforeEach(() => {
+    // 地址栏优先级高于本地存储：前面用例里的 App 可能已经把参数写进 hash，
+    // 不清掉会盖住下面的种子数据。
+    window.history.replaceState(null, '', '/')
+  })
 
-    vi.useFakeTimers()
-    const wrapper = mount(App, {
+  function mountApp() {
+    return mount(App, {
       global: {
         stubs: {
           ElAlert: true,
@@ -561,8 +559,35 @@ describe('App 快照', () => {
         },
       },
     })
+  }
+
+  type AppWrapper = ReturnType<typeof mountApp>
+
+  /** 表头那个固定文案的「管理快照」按钮 */
+  function snapshotButton(wrapper: AppWrapper) {
+    return wrapper.findAll('button').find((b) => b.text() === '管理快照')
+  }
+
+  /** 表头快照名标签；未命中任何快照时不渲染 */
+  function snapshotTag(wrapper: AppWrapper) {
+    return wrapper.find('.snap-tag')
+  }
+
+  // 快照只存参数，所以「载入」必须真的把参数换成快照里的那一套，
+  // 并走原有的持久化链路写回本地（否则刷新就回到旧参数了）。
+  it('载入快照会覆盖当前参数，并写回本地', async () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    params.initialPrincipal = 4_000_000
+    params.annualReturn = 0.1
+    writeSnapshots([createSnapshot(params, DEFAULT_MC_CONFIG, '高收益高本金')])
+
+    vi.useFakeTimers()
+    const wrapper = mountApp()
 
     expect(readStateFromStorage()?.params.initialPrincipal).not.toBe(4_000_000)
+    // 当前是默认参数，没命中任何快照
+    expect(snapshotTag(wrapper).exists()).toBe(false)
+    expect(snapshotButton(wrapper)?.text()).toBe('管理快照')
 
     const loadButton = wrapper.findAll('button').find((b) => b.text() === '载入')!
     await loadButton.trigger('click')
@@ -573,7 +598,49 @@ describe('App 快照', () => {
     const persisted = readStateFromStorage()
     expect(persisted?.params.initialPrincipal).toBe(4_000_000)
     expect(persisted?.params.annualReturn).toBe(0.1)
-    expect(wrapper.html()).toContain('快照 1')
+    // 载入之后表头就该写出「现在就是这条快照」
+    expect(snapshotTag(wrapper).text()).toBe('高收益高本金')
+
+    wrapper.unmount()
+  })
+
+  // 回归：真实浏览器上踩到过——项 id 是每次页面加载新生成的随机值，
+  // 只要 id 混进指纹，刷新一下（参数从本地存储读回、id 与快照里那套不同）
+  // 名字就没了。
+  it('刷新后（参数来自本地存储）依然认得出当前属于哪条快照', () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    params.initialPrincipal = 4_000_000
+    writeSnapshots([createSnapshot(params, DEFAULT_MC_CONFIG, '高本金')])
+    // 模拟下次页面加载：同样的参数，另一套项 id
+    const reloaded = cloneParams(params)
+    reloaded.incomes = reloaded.incomes.map((item) => ({ ...item, id: 'reload-income-1' }))
+    writeStateToStorage({
+      version: STATE_VERSION,
+      params: reloaded,
+      mc: { ...DEFAULT_MC_CONFIG },
+    })
+
+    const wrapper = mountApp()
+    expect(snapshotTag(wrapper).text()).toBe('高本金')
+
+    wrapper.unmount()
+  })
+
+  // 参数一旦偏离快照，名字就该消失（按钮文案始终不变）
+  it('当前参数与任何快照都不同时不显示名字', () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    writeSnapshots([createSnapshot(params, DEFAULT_MC_CONFIG, '存档')])
+    const drifted = cloneParams(params)
+    drifted.annualReturn = 0.09
+    writeStateToStorage({
+      version: STATE_VERSION,
+      params: drifted,
+      mc: { ...DEFAULT_MC_CONFIG },
+    })
+
+    const wrapper = mountApp()
+    expect(snapshotTag(wrapper).exists()).toBe(false)
+    expect(snapshotButton(wrapper)?.text()).toBe('管理快照')
 
     wrapper.unmount()
   })

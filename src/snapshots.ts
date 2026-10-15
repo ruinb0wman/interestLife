@@ -13,7 +13,7 @@
 // 一律先 sanitizeParams / sanitizeMcConfig 收口，坏数据只丢字段、不炸整页。
 // key 带 STATE_VERSION：与 persist.ts 的策略一致，参数结构不兼容时整批作废（不做迁移）。
 
-import { cloneParams, createItemId, type McConfig, type SimParams } from './lib'
+import { cloneParams, createItemId, type CashFlowItem, type McConfig, type SimParams } from './lib'
 import { STATE_VERSION, asRecord, sanitizeMcConfig, sanitizeParams } from './persist'
 
 export const SNAPSHOT_KEY = `interestlife.snapshots.v${STATE_VERSION}`
@@ -154,6 +154,59 @@ export function addSnapshot(items: Snapshot[], snapshot: Snapshot): Snapshot[] {
 export function removeSnapshot(items: Snapshot[], id: string): Snapshot[] {
   const next = items.filter((item) => item.id !== id)
   return next.length === items.length ? items : next
+}
+
+/**
+ * 指纹里要丢掉收支项的 id。
+ * id 是列表渲染用的身份（createItemId() 每次页面加载都是新随机值），不是「方案」的一部分：
+ * 「重置默认」会重新生成一套 id，同一个方案在两台设备/两次刷新之间 id 也必然不同，
+ * 把它们算进去就会退化成「刷新一下或重置一下就不认识自己的快照了」。
+ * 项的顺序仍在指纹里——顺序不同就不算同一套参数，宁可要求严一点。
+ */
+function withoutIds(items: CashFlowItem[]): Omit<CashFlowItem, 'id'>[] {
+  return items.map(({ id: _id, ...rest }) => rest)
+}
+
+/**
+ * 状态指纹：把「参数 + 压力测试设置」归一化后编码成可直接比较的字符串。
+ *
+ * 两侧都必须先过各自的规整函数再编码：当前参数来自正在编辑的响应式对象，快照参数来自
+ * localStorage 往返 + sanitizeSnapshot，二者在「合法但写法不同」的输入上（interval 越界、
+ * 缺 enabled、年龄带小数、字段顺序不同…）会被规整成同一个结果。少了这一步就会出现
+ * 「明明和快照一模一样，界面却不认」的假阴性——这属于指纹方案唯一的坑，所以两侧都在这里收口。
+ *
+ * 用 JSON 而不是 serializeState()：指纹只需要「可比较」，不需要进 URL，省掉一次 base64。
+ */
+export function stateFingerprint(params: SimParams, mc: McConfig): string {
+  const normalized = sanitizeParams(params)
+  return JSON.stringify({
+    version: STATE_VERSION,
+    params: {
+      ...normalized,
+      incomes: withoutIds(normalized.incomes),
+      expenses: withoutIds(normalized.expenses),
+    },
+    mc: sanitizeMcConfig(mc),
+  })
+}
+
+/**
+ * 找出「当前参数就是它」的快照。
+ * 列表是最近的在前，所以多条快照参数相同时命中的是最新那条（不额外提示，见下方说明）。
+ *
+ * 代价已实测：50 条快照 × 100 个收支项时约 2 ms（现实规模 22 项约 0.9 ms），
+ * 与 simulate() 同量级，还不足以需要按快照缓存指纹。
+ *
+ * 注意 MC 也参与指纹：载入后只调压力测试的迭代次数，名字会消失。
+ * 要改成「只看参数不看 MC」就把上面的 mc 摘掉。
+ */
+export function findMatchingSnapshot(
+  items: Snapshot[],
+  params: SimParams,
+  mc: McConfig,
+): Snapshot | null {
+  const target = stateFingerprint(params, mc)
+  return items.find((item) => stateFingerprint(item.params, item.mc) === target) ?? null
 }
 
 // 快照是**只读记录**：创建之后不得再修改（名字也不行）。

@@ -8,9 +8,11 @@ import {
   addSnapshot,
   createSnapshot,
   defaultSnapshotName,
+  findMatchingSnapshot,
   formatSavedAt,
   listSnapshots,
   removeSnapshot,
+  stateFingerprint,
   uniqueSnapshotName,
   writeSnapshots,
   type Snapshot,
@@ -169,6 +171,87 @@ describe('addSnapshot / removeSnapshot', () => {
     expect(stored.params.pessimisticReturn).toBe(DEFAULT_PARAMS.pessimisticReturn)
     expect(stored.params.expenses[0].amount).toBe(DEFAULT_PARAMS.expenses[0].amount)
     expect(stored.name).toBe('快照')
+  })
+})
+
+describe('stateFingerprint / findMatchingSnapshot', () => {
+  it('当前参数与某条快照一致时命中它', () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    params.initialPrincipal = 1_000_000
+    const items = [snap('别的'), createSnapshot(params, DEFAULT_MC_CONFIG, '目标')]
+
+    expect(findMatchingSnapshot(items, params, DEFAULT_MC_CONFIG)?.name).toBe('目标')
+  })
+
+  it('参数或 MC 任一处不同就不算命中', () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    const items = [createSnapshot(params, DEFAULT_MC_CONFIG, '基准')]
+
+    expect(findMatchingSnapshot(items, params, DEFAULT_MC_CONFIG)?.name).toBe('基准')
+    expect(
+      findMatchingSnapshot(items, { ...params, annualReturn: 0.09 }, DEFAULT_MC_CONFIG),
+    ).toBeNull()
+    // MC 参与指纹：只改压力测试设置也算「不再是这条快照」
+    expect(
+      findMatchingSnapshot(items, params, { ...DEFAULT_MC_CONFIG, iterations: 2000 }),
+    ).toBeNull()
+  })
+
+  it('没有快照时返回 null', () => {
+    expect(findMatchingSnapshot([], cloneParams(DEFAULT_PARAMS), DEFAULT_MC_CONFIG)).toBeNull()
+  })
+
+  // 列表是最近的在前，所以多条快照参数相同时返回最新的那条
+  it('两条快照参数相同时命中最新的那条', () => {
+    const items = [snap('新'), snap('旧')]
+    expect(
+      findMatchingSnapshot(items, cloneParams(DEFAULT_PARAMS), DEFAULT_MC_CONFIG)?.name,
+    ).toBe('新')
+  })
+
+  // 指纹的两侧都要过规整函数：快照里存的是「合法但写法不同」的输入时，
+  // 只要规整后与当前参数一致就该算命中。少了这一步就是形如
+  // 「明明和快照一模一样，界面却不显示名字」的假阴性。
+  it('写法不同但规整后等价的输入仍算命中', () => {
+    const raw = JSON.parse(JSON.stringify(DEFAULT_PARAMS))
+    delete raw.expenses[0].enabled // 缺 enabled → 规整成 true（与默认值相同）
+    raw.expenses[0].interval = 0 // interval 越界 → 夹到 1（与默认值相同）
+    localStorage.setItem(
+      SNAPSHOT_KEY,
+      JSON.stringify([
+        { id: 'x', name: '等价写法', savedAt: new Date().toISOString(), params: raw, mc: DEFAULT_MC_CONFIG },
+      ]),
+    )
+
+    const [stored] = listSnapshots()
+    expect(
+      findMatchingSnapshot([stored], cloneParams(DEFAULT_PARAMS), DEFAULT_MC_CONFIG)?.name,
+    ).toBe('等价写法')
+  })
+
+  // 回归：项 id 每次页面加载都是新随机值（createItemId 在 DEFAULT_PARAMS 里就跑过一次），
+  // 「重置默认」/换设备/刷新后同一套参数的 id 必然不同。id 一旦参与指纹，
+  // 就会退化成「刷新一下就不认识自己的快照了」——真实浏览器上踩到过。
+  it('收支项 id 不同、其余完全相同时仍算命中', () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    const items = [
+      createSnapshot(
+        { ...cloneParams(params), incomes: params.incomes.map((i) => ({ ...i, id: '另一套-id' })) },
+        DEFAULT_MC_CONFIG,
+        '同参数异 id',
+      ),
+    ]
+
+    expect(findMatchingSnapshot(items, params, DEFAULT_MC_CONFIG)?.name).toBe('同参数异 id')
+  })
+
+  it('指纹对同一套参数稳定，对改过的参数不同', () => {
+    const params = cloneParams(DEFAULT_PARAMS)
+    const before = stateFingerprint(params, DEFAULT_MC_CONFIG)
+    expect(stateFingerprint(cloneParams(params), { ...DEFAULT_MC_CONFIG })).toBe(before)
+
+    params.expenses[0].amount += 1
+    expect(stateFingerprint(params, DEFAULT_MC_CONFIG)).not.toBe(before)
   })
 })
 

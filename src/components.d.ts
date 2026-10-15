@@ -31,6 +31,7 @@ declare module 'vue' {
     ElSwitch: typeof import('element-plus/es')['ElSwitch']
     ElTable: typeof import('element-plus/es')['ElTable']
     ElTableColumn: typeof import('element-plus/es')['ElTableColumn']
+    ElTag: typeof import('element-plus/es')['ElTag']
     ParameterPanel: typeof import('./components/ParameterPanel.vue')['default']
     SnapshotPanel: typeof import('./components/SnapshotPanel.vue')['default']
     StatCards: typeof import('./components/StatCards.vue')['default']

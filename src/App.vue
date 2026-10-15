@@ -25,7 +25,7 @@ import StatCards from './components/StatCards.vue'
 import DetailTable from './components/DetailTable.vue'
 import StressTest from './components/StressTest.vue'
 import SnapshotPanel from './components/SnapshotPanel.vue'
-import { listSnapshots, type Snapshot } from './snapshots'
+import { findMatchingSnapshot, listSnapshots, type Snapshot } from './snapshots'
 
 // 启动时的状态优先级：URL hash（分享链接）> localStorage（上次编辑）> 默认值
 const initial = loadInitialState()
@@ -45,7 +45,11 @@ const conclusion = computed(() => verdict(analysis.value, pessimisticAnalysis.va
 
 // ── 方案快照 ─────────────────────────────────────────────────────
 const snapshotOpen = ref(false)
-const snapshotCount = ref(listSnapshots().length)
+/**
+ * 快照列表的副本，由 SnapshotPanel 在打开与每次增删后 emit 过来（抽屉才是列表的持有者）。
+ * 另一个标签页在抽屉关着时写了快照，这里会一直旧到下次打开抽屉——只影响显示哪个名字。
+ */
+const snapshots = ref<Snapshot[]>(listSnapshots())
 /**
  * 载入快照会递增这个 token，让 StressTest 把上一次的蒙特卡洛结果清掉。
  * 快照按选定方案只存参数、不存结果，而 MC 用 Math.random() 重跑不复现，
@@ -55,9 +59,12 @@ const mcResetToken = ref(0)
 /** 载入前的状态，供 toast 里的「撤销」回滚；两个数组已是深拷贝，不会与正在编辑的项共享引用 */
 let undoState: { params: SimParams; mc: McConfig } | null = null
 
-const snapshotLabel = computed(() =>
-  snapshotCount.value > 0 ? `快照 ${snapshotCount.value}` : '快照',
-)
+/**
+ * 当前参数命中哪条快照——按指纹现算，不额外记「上次载入了谁」：
+ * 载入后显示名字，改了参数名字自动消失，撤销回去或刷新页面重现，都不用单独维护状态。
+ * 代价：参数每次变化都要规整 + 编码一次全套参数（实测 50 条快照 × 100 项约 2 ms）。
+ */
+const activeSnapshot = computed(() => findMatchingSnapshot(snapshots.value, params, mcConfig.value))
 
 function loadSnapshot(snapshot: Snapshot) {
   undoState = { params: cloneParams(params), mc: { ...mcConfig.value } }
@@ -157,7 +164,18 @@ async function copyShareLink() {
       <div class="header-row">
         <h1>躺平财务模拟器 <span class="sub">· 不交社保版</span></h1>
         <div class="header-actions">
-          <el-button size="small" plain @click="snapshotOpen = true">{{ snapshotLabel }}</el-button>
+          <span class="snap-group">
+            <el-tag
+              v-if="activeSnapshot"
+              size="small"
+              type="info"
+              class="snap-tag"
+              :title="`当前参数与快照「${activeSnapshot.name}」完全一致`"
+            >
+              {{ activeSnapshot.name }}
+            </el-tag>
+            <el-button size="small" plain @click="snapshotOpen = true">管理快照</el-button>
+          </span>
           <el-button size="small" plain @click="copyShareLink">复制方案链接</el-button>
           <el-button size="small" plain @click="resetAll">重置默认</el-button>
         </div>
@@ -257,7 +275,7 @@ async function copyShareLink() {
       :params="params"
       :mc="mcConfig"
       @load="loadSnapshot"
-      @change="snapshotCount = $event"
+      @change="snapshots = $event"
     />
   </div>
 </template>
@@ -281,6 +299,22 @@ async function copyShareLink() {
 .header-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+/* 名字与按钮包在一起，窄屏换行时不会被拆开 */
+.snap-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.snap-tag {
+  max-width: 12em;
+}
+.snap-tag :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .loaded-hint {
   font-size: 12px;
