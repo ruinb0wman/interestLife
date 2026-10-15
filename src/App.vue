@@ -19,6 +19,7 @@ import {
   STATE_VERSION,
   type AppState,
 } from './persist'
+import { exportChartImage } from './export-image'
 import ParameterPanel from './components/ParameterPanel.vue'
 import CashFlowChart from './components/CashFlowChart.vue'
 import StatCards from './components/StatCards.vue'
@@ -45,6 +46,8 @@ const conclusion = computed(() => verdict(analysis.value, pessimisticAnalysis.va
 
 // ── 方案快照 ─────────────────────────────────────────────────────
 const snapshotOpen = ref(false)
+/** 图表组件实例，只为「导出图片」取一张 PNG 用 */
+const chartRef = ref<InstanceType<typeof CashFlowChart> | null>(null)
 /**
  * 快照列表的副本，由 SnapshotPanel 在打开与每次增删后 emit 过来（抽屉才是列表的持有者）。
  * 另一个标签页在抽屉关着时写了快照，这里会一直旧到下次打开抽屉——只影响显示哪个名字。
@@ -156,6 +159,21 @@ async function copyShareLink() {
   if (ok) ElMessage.success('方案链接已复制，参数包含在链接里')
   else ElMessage.warning('复制失败，请手动复制地址栏链接')
 }
+
+/** 导出图片：图表 PNG + 一条参数摘要页脚；宽度就是图表当前宽度 */
+async function exportImage() {
+  const dataUrl = chartRef.value?.toPngDataUrl()
+  if (!dataUrl) {
+    ElMessage.warning('图表还没准备好，稍后再试')
+    return
+  }
+  try {
+    const name = await exportChartImage(dataUrl, currentState().params)
+    ElMessage.success(`图片已生成：${name}`)
+  } catch {
+    ElMessage.error('导出图片失败，请重试')
+  }
+}
 </script>
 
 <template>
@@ -176,6 +194,7 @@ async function copyShareLink() {
             </el-tag>
             <el-button size="small" plain @click="snapshotOpen = true">管理快照</el-button>
           </span>
+          <el-button size="small" plain @click="exportImage">导出图片</el-button>
           <el-button size="small" plain @click="copyShareLink">复制方案链接</el-button>
           <el-button size="small" plain @click="resetAll">重置默认</el-button>
         </div>
@@ -252,6 +271,7 @@ async function copyShareLink() {
     <StressTest :params="params" v-model:config="mcConfig" :reset-token="mcResetToken" />
 
     <CashFlowChart
+      ref="chartRef"
       :rows="rows"
       :optimistic-rows="optimisticRows"
       :pessimistic-rows="pessimisticRows"

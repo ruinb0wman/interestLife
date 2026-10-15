@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import App from './App.vue'
 import CashFlowItemRow from './components/CashFlowItemRow.vue'
 import DetailTable from './components/DetailTable.vue'
@@ -16,13 +16,23 @@ import {
   analyze,
   cloneParams,
   createItem,
+  DEFAULT_END_AGE,
   DEFAULT_PARAMS,
+  DEFAULT_START_AGE,
   simulate,
   simulateScenario,
   type Analysis,
   type CashFlowItem,
   type SimParams,
 } from './lib'
+
+// App 的「导出图片」要真 canvas，happy-dom 里跑不了 —— 整个模块换掉，
+// 这个用例只守一件事：点按钮 → 拿图表 PNG + 当前参数去合成。
+const exportChartImageMock = vi.hoisted(() => vi.fn())
+vi.mock('./export-image', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./export-image')>()),
+  exportChartImage: exportChartImageMock,
+}))
 
 function analysisOf(overrides: Partial<SimParams> = {}): Analysis {
   const params: SimParams = { ...DEFAULT_PARAMS, ...overrides }
@@ -642,6 +652,54 @@ describe('App 快照', () => {
     expect(snapshotTag(wrapper).exists()).toBe(false)
     expect(snapshotButton(wrapper)?.text()).toBe('管理快照')
 
+    wrapper.unmount()
+  })
+})
+
+describe('App 导出图片', () => {
+  afterEach(() => {
+    exportChartImageMock.mockReset()
+    localStorage.clear()
+  })
+
+  const PNG_DATA_URL = 'data:image/png;base64,AAA'
+
+  /** 替身必须 expose 出 CashFlowChart 暴露的那个方法，否则 App 拿不到 dataUrl */
+  const chartStub = defineComponent({
+    setup(_, { expose }) {
+      expose({ toPngDataUrl: () => PNG_DATA_URL })
+      return () => h('div')
+    },
+  })
+
+  it('点「导出图片」把图表 PNG 与当前参数交给合成函数，并提示文件名', async () => {
+    window.history.replaceState(null, '', '/')
+    exportChartImageMock.mockResolvedValue('躺平模拟器_30-90岁_2026-10-15.png')
+
+    const wrapper = mount(App, {
+      global: {
+        stubs: {
+          ElAlert: true,
+          ParameterPanel: true,
+          StressTest: true,
+          CashFlowChart: chartStub,
+          StatCards: true,
+          DetailTable: true,
+        },
+      },
+    })
+
+    const button = wrapper.findAll('button').find((b) => b.text() === '导出图片')
+    expect(button).toBeTruthy()
+    await button!.trigger('click')
+    await nextTick()
+
+    expect(exportChartImageMock).toHaveBeenCalledTimes(1)
+    const [dataUrl, sentParams] = exportChartImageMock.mock.calls[0]
+    expect(dataUrl).toBe(PNG_DATA_URL)
+    expect(sentParams).toMatchObject({ startAge: DEFAULT_START_AGE, endAge: DEFAULT_END_AGE })
+
+    // 卸载以取消 App 里去抖的持久化计时器，避免测试结束后才触发副作用
     wrapper.unmount()
   })
 })
