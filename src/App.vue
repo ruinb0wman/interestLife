@@ -162,7 +162,7 @@ async function copyShareLink() {
   <div class="page">
     <header class="header">
       <div class="header-row">
-        <h1>躺平财务模拟器 <span class="sub">· 不交社保版</span></h1>
+        <h1>躺平财务模拟器</h1>
         <div class="header-actions">
           <span class="snap-group">
             <el-tag
@@ -329,11 +329,6 @@ async function copyShareLink() {
   font-weight: 700;
   color: var(--text);
   margin: 0;
-}
-.header .sub {
-  font-size: 18px;
-  font-weight: 500;
-  color: var(--text-2);
 }
 .desc {
   font-size: 14px;
