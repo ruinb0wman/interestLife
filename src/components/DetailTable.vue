@@ -66,14 +66,15 @@ const depletedAt = computed(() => {
 const startAge = computed(() => active.value.rows[0]?.age ?? props.params.startAge)
 
 /**
- * 每 5 年一个节点；耗尽的当年**必定**补上（否则「78 岁耗尽」时表里只有 75 / 80，
- * 断点那一行反而看不见，正是最容易引起误读的地方）。
+ * 每 5 年一个节点，**末年末必定补上**。采样基准是起始年龄（32 + 5k → 32…72），
+ * endAge 常常落在节点之间（32→75 差 43，不是 5 的倍数），不补就会被整年丢掉——
+ * 而末年恰好是「能不能躺到结束」这个结论的唯一依据。耗尽年同理（否则断点那行看不见）。
  */
 const tableRows = computed(() => {
   const rows = active.value.rows
   const sampled = rows.filter((r) => (r.age - startAge.value) % 5 === 0)
   const last = rows[rows.length - 1]
-  if (last && last.endPrincipal < 0 && sampled[sampled.length - 1] !== last) {
+  if (last && sampled[sampled.length - 1] !== last) {
     return [...sampled, last]
   }
   return sampled
@@ -145,7 +146,7 @@ const totals = computed(() => {
 <template>
   <div class="card">
     <el-collapse>
-      <el-collapse-item title="查看逐年明细（每 5 年一个节点）" name="detail">
+      <el-collapse-item title="查看逐年明细（每 5 年一个节点 + 末年）" name="detail">
         <div class="scenario-bar">
           <template v-if="scenarios.length > 1">
             <span class="scenario-label">情景</span>

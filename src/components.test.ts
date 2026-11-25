@@ -427,6 +427,20 @@ describe('DetailTable 情景切换', () => {
     expect(wrapper.text()).toContain('普通情景：90 岁年末本金')
   })
 
+  // el-table 在 happy-dom 里只渲染空 <tr>（单元格内容不可见），只能数行数：
+  // 32 起每 5 年 = 32…72 共 9 行，末年补齐后应为 10 行。
+  it('末年必入表：endAge 落在 5 年网格之外时也不丢（32 → 75 差 43）', () => {
+    const mountWith = (startAge: number, endAge: number) => {
+      const params = cloneParams(DEFAULT_PARAMS)
+      params.startAge = startAge
+      params.endAge = endAge
+      return mount(DetailTable, { props: { rows: simulate(params), params } })
+    }
+
+    expect(mountWith(32, 72).findAll('.el-table__row')).toHaveLength(9)
+    expect(mountWith(32, 75).findAll('.el-table__row')).toHaveLength(10)
+  })
+
   it('未传三情景数据时退化为单情景（向后兼容）', () => {
     const params = cliffParams()
     const wrapper = mount(DetailTable, { props: { rows: simulate(params), params } })
